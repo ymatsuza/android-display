@@ -1,7 +1,7 @@
 package display
 
 /*
-#cgo CFLAGS: -x objective-c
+#cgo CFLAGS: -x objective-c -fobjc-arc -I../../bridge
 #cgo LDFLAGS: -framework CoreGraphics -framework Foundation
 #include "../../bridge/display_bridge.h"
 */

@@ -1,7 +1,7 @@
 package capture
 
 /*
-#cgo CFLAGS: -x objective-c
+#cgo CFLAGS: -x objective-c -fobjc-arc -I../../bridge
 #cgo LDFLAGS: -framework ScreenCaptureKit -framework CoreGraphics -framework CoreMedia -framework CoreVideo -framework Foundation
 #include "../../bridge/capture_bridge.h"
 

@@ -1,7 +1,7 @@
 package encoder
 
 /*
-#cgo CFLAGS: -x objective-c
+#cgo CFLAGS: -x objective-c -fobjc-arc -I../../bridge
 #cgo LDFLAGS: -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework CoreFoundation -framework Foundation
 #include "../../bridge/encoder_bridge.h"
 #include <string.h>

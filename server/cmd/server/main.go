@@ -22,8 +22,8 @@ import (
 
 const (
 	controlPort    = 9000
-	defaultFPS     = 60
-	defaultBitrate = 8_000_000
+	defaultFPS     = 30
+	defaultBitrate = 4_000_000
 )
 
 func main() {

@@ -166,7 +166,7 @@ EncoderResult CreateEncoder(int width, int height, int fps, int bitrate, Encoded
     }
 
     // Set max keyframe interval (GOP size)
-    int keyframeInterval = fps * 2; // keyframe every 2 seconds
+    int keyframeInterval = fps; // keyframe every 1 second
     CFNumberRef keyframeRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &keyframeInterval);
     if (keyframeRef) {
         VTSessionSetProperty(session, kVTCompressionPropertyKey_MaxKeyFrameInterval, keyframeRef);

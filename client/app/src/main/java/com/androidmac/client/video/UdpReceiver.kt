@@ -44,7 +44,7 @@ class UdpReceiver(private val port: Int) {
 
     companion object {
         private const val TAG = "UdpReceiver"
-        private const val HEADER_SIZE = 15
+        private const val HEADER_SIZE = 17
         private const val MAX_PACKET = 1500
     }
 
@@ -81,8 +81,8 @@ class UdpReceiver(private val port: Int) {
                 val seq = bb.int.toLong() and 0xFFFFFFFFL
                 val ts = bb.long
                 val frameType = bb.get()
-                val fragIndex = bb.get().toInt() and 0xFF
-                val fragTotal = bb.get().toInt() and 0xFF
+                val fragIndex = bb.short.toInt() and 0xFFFF
+                val fragTotal = bb.short.toInt() and 0xFFFF
 
                 val payloadSize = packet.length - HEADER_SIZE
                 val payload = ByteArray(payloadSize)

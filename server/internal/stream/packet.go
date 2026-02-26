@@ -7,8 +7,8 @@ import (
 
 const (
 	// PacketHeaderSize is the fixed size of every packet header in bytes:
-	// Sequence (4B) + Timestamp (8B) + FrameType (1B) + FragIndex (1B) + FragTotal (1B)
-	PacketHeaderSize = 15
+	// Sequence (4B) + Timestamp (8B) + FrameType (1B) + FragIndex (2B) + FragTotal (2B)
+	PacketHeaderSize = 17
 
 	// MaxPayloadSize is the maximum payload per UDP packet, sized to fit
 	// within typical WiFi MTU (~1400 bytes) after subtracting the header.
@@ -22,13 +22,13 @@ const (
 	FrameTypePPS byte = 0x11
 )
 
-// PacketHeader is the 15-byte wire header prepended to every UDP packet.
+// PacketHeader is the 17-byte wire header prepended to every UDP packet.
 type PacketHeader struct {
 	Sequence  uint32 // Monotonically increasing packet counter
 	Timestamp uint64 // Frame presentation timestamp (nanoseconds)
 	FrameType byte   // NAL unit type (IDR, P, B, SPS, PPS)
-	FragIndex uint8  // Fragment index within this frame (0-based)
-	FragTotal uint8  // Total number of fragments for this frame
+	FragIndex uint16 // Fragment index within this frame (0-based)
+	FragTotal uint16 // Total number of fragments for this frame
 }
 
 // Packet is a single UDP datagram: header + payload bytes.
@@ -44,8 +44,8 @@ func (h *PacketHeader) Marshal() []byte {
 	binary.BigEndian.PutUint32(buf[0:4], h.Sequence)
 	binary.BigEndian.PutUint64(buf[4:12], h.Timestamp)
 	buf[12] = h.FrameType
-	buf[13] = h.FragIndex
-	buf[14] = h.FragTotal
+	binary.BigEndian.PutUint16(buf[13:15], h.FragIndex)
+	binary.BigEndian.PutUint16(buf[15:17], h.FragTotal)
 	return buf
 }
 
@@ -58,8 +58,8 @@ func (h *PacketHeader) Unmarshal(buf []byte) error {
 	h.Sequence = binary.BigEndian.Uint32(buf[0:4])
 	h.Timestamp = binary.BigEndian.Uint64(buf[4:12])
 	h.FrameType = buf[12]
-	h.FragIndex = buf[13]
-	h.FragTotal = buf[14]
+	h.FragIndex = binary.BigEndian.Uint16(buf[13:15])
+	h.FragTotal = binary.BigEndian.Uint16(buf[15:17])
 	return nil
 }
 
@@ -71,8 +71,8 @@ func (p *Packet) MarshalPacket() []byte {
 	binary.BigEndian.PutUint32(buf[0:4], p.Header.Sequence)
 	binary.BigEndian.PutUint64(buf[4:12], p.Header.Timestamp)
 	buf[12] = p.Header.FrameType
-	buf[13] = p.Header.FragIndex
-	buf[14] = p.Header.FragTotal
+	binary.BigEndian.PutUint16(buf[13:15], p.Header.FragIndex)
+	binary.BigEndian.PutUint16(buf[15:17], p.Header.FragTotal)
 	copy(buf[PacketHeaderSize:], p.Payload)
 	return buf
 }
@@ -122,8 +122,8 @@ func SplitIntoPackets(seq uint32, timestamp uint64, frameType byte, data []byte)
 				Sequence:  seq,
 				Timestamp: timestamp,
 				FrameType: frameType,
-				FragIndex: uint8(i),
-				FragTotal: uint8(total),
+				FragIndex: uint16(i),
+				FragTotal: uint16(total),
 			},
 			Payload: data[start:end],
 		})

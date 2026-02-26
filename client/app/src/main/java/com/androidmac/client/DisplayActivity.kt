@@ -89,7 +89,7 @@ class DisplayActivity : AppCompatActivity() {
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
 
             override fun surfaceDestroyed(holder: SurfaceHolder) {
-                stopVideoPipeline()
+                stopDecoder()
             }
         })
     }
@@ -113,7 +113,7 @@ class DisplayActivity : AppCompatActivity() {
     }
 
     private fun startVideoPipeline(holder: SurfaceHolder) {
-        // Initialize decoder
+        // Initialize decoder (recreated each time the surface changes)
         val decoder = VideoDecoder(videoWidth, videoHeight, holder.surface)
         decoder.start()
         videoDecoder = decoder
@@ -121,6 +121,15 @@ class DisplayActivity : AppCompatActivity() {
         // Start decode loop
         decodeJob = lifecycleScope.launch {
             decoder.decodeLoop()
+        }
+
+        // Only set up the UDP receiver and touch pipeline once.
+        // On subsequent surface re-creations (e.g. returning from background),
+        // the existing UDP stream keeps flowing and the new decoder will pick
+        // up from the next keyframe automatically.
+        if (udpReceiver != null) {
+            Log.d(TAG, "Surface recreated — decoder restarted, waiting for next keyframe")
+            return
         }
 
         // C1: Bind UDP to port 0 (auto-assign) to avoid port conflicts,
@@ -153,9 +162,19 @@ class DisplayActivity : AppCompatActivity() {
         startTouchPipeline()
     }
 
+    private var packetCount = 0L
+    private var submitCount = 0L
+
     private fun handlePacket(packet: VideoPacket) {
+        packetCount++
+        if (packetCount <= 10 || packetCount % 1000 == 0L) {
+            Log.d(TAG, "pkt #$packetCount seq=${packet.sequence} ft=0x${String.format("%02x", packet.frameType)} frag=${packet.fragIndex}/${packet.fragTotal} payload=${packet.payload.size}")
+        }
+
         if (packet.fragTotal <= 1) {
             // Single-fragment NAL unit, submit directly with frame type and timestamp
+            submitCount++
+            if (submitCount <= 10) Log.d(TAG, "submit NAL #$submitCount ft=0x${String.format("%02x", packet.frameType)} size=${packet.payload.size}")
             videoDecoder?.submitNAL(packet.payload, packet.frameType, packet.timestamp)
             return
         }
@@ -163,7 +182,10 @@ class DisplayActivity : AppCompatActivity() {
         // Multi-fragment reassembly
         synchronized(this) {
             if (packet.sequence != currentSequence) {
-                // New frame, reset
+                // New frame starting — log if previous frame was incomplete
+                if (currentSequence >= 0 && fragments.size < expectedFragTotal) {
+                    Log.w(TAG, "Dropping incomplete seq=$currentSequence: got ${fragments.size}/$expectedFragTotal frags")
+                }
                 currentSequence = packet.sequence
                 currentFrameType = packet.frameType
                 currentTimestamp = packet.timestamp
@@ -188,8 +210,11 @@ class DisplayActivity : AppCompatActivity() {
                 }
                 val ft = currentFrameType
                 val ts = currentTimestamp
+                val assembledData = assembled.toByteArray()
                 fragments.clear()
-                videoDecoder?.submitNAL(assembled.toByteArray(), ft, ts)
+                submitCount++
+                Log.d(TAG, "submit reassembled NAL #$submitCount ft=0x${String.format("%02x", ft)} size=${assembledData.size} frags=$expectedFragTotal")
+                videoDecoder?.submitNAL(assembledData, ft, ts)
             }
         }
     }
@@ -279,21 +304,30 @@ class DisplayActivity : AppCompatActivity() {
         }
     }
 
-    private fun stopVideoPipeline() {
-        receiveJob?.cancel()
+    /** Stop only the decoder (called when Surface is destroyed, e.g. app backgrounded). */
+    private fun stopDecoder() {
         decodeJob?.cancel()
-        udpReceiver?.close()
+        decodeJob = null
         videoDecoder?.stop()
-        touchSender?.disconnect()
-        udpReceiver = null
         videoDecoder = null
+        Log.d(TAG, "Decoder stopped (surface destroyed)")
+    }
+
+    /** Tear down everything — called once when the Activity is destroyed. */
+    private fun stopAllPipelines() {
+        stopDecoder()
+        receiveJob?.cancel()
+        receiveJob = null
+        udpReceiver?.close()
+        udpReceiver = null
+        touchSender?.disconnect()
         touchSender = null
-        Log.d(TAG, "Video pipeline stopped")
+        Log.d(TAG, "All pipelines stopped")
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        stopVideoPipeline()
+        stopAllPipelines()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

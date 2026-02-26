@@ -20,8 +20,13 @@ static BOOL LoadCoreDisplayFramework(void) {
         return YES;
     }
 
+    // Try public Frameworks first (macOS 14+), then PrivateFrameworks (older)
     NSBundle *bundle = [NSBundle bundleWithPath:
-        @"/System/Library/PrivateFrameworks/CoreDisplay.framework"];
+        @"/System/Library/Frameworks/CoreDisplay.framework"];
+    if (!bundle) {
+        bundle = [NSBundle bundleWithPath:
+            @"/System/Library/PrivateFrameworks/CoreDisplay.framework"];
+    }
     if (!bundle) {
         return NO;
     }
@@ -102,49 +107,38 @@ VirtualDisplayResult CreateVirtualDisplay(VirtualDisplayConfig config) {
             return result;
         }
 
-        // Step 4: Create a display mode
-        id mode = [[CGVirtualDisplayModeClass alloc] init];
+        // Step 4: Create a display mode via initWithWidth:height:refreshRate:
+        id mode = nil;
+        @try {
+            SEL initModeSel = NSSelectorFromString(@"initWithWidth:height:refreshRate:");
+            id newMode = [CGVirtualDisplayModeClass alloc];
+            NSMethodSignature *sig = [newMode methodSignatureForSelector:initModeSel];
+            if (sig) {
+                NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+                [inv setSelector:initModeSel];
+                [inv setTarget:newMode];
+                unsigned int w = (unsigned int)config.width;
+                unsigned int h = (unsigned int)config.height;
+                double refresh = 60.0;
+                [inv setArgument:&w atIndex:2];
+                [inv setArgument:&h atIndex:3];
+                [inv setArgument:&refresh atIndex:4];
+                [inv invoke];
+                __unsafe_unretained id invokeResult;
+                [inv getReturnValue:&invokeResult];
+                mode = invokeResult;
+            }
+        } @catch (NSException *exception) {
+            snprintf(result.errorMsg, sizeof(result.errorMsg),
+                     "failed to create display mode: %s",
+                     [[exception reason] UTF8String]);
+            return result;
+        }
+
         if (!mode) {
             snprintf(result.errorMsg, sizeof(result.errorMsg),
                      "failed to create CGVirtualDisplayMode");
             return result;
-        }
-
-        // Configure mode properties via KVC
-        @try {
-            [mode setValue:@((unsigned int)config.width) forKey:@"width"];
-            [mode setValue:@((unsigned int)config.height) forKey:@"height"];
-            [mode setValue:@(60.0) forKey:@"refreshRate"];
-        } @catch (NSException *exception) {
-            // If direct KVC doesn't work, try initWithWidth:height:refreshRate:
-            // via NSInvocation as a fallback
-            SEL initSel = NSSelectorFromString(@"initWithWidth:height:refreshRate:");
-            if ([CGVirtualDisplayModeClass instancesRespondToSelector:initSel]) {
-                id newMode = [CGVirtualDisplayModeClass alloc];
-                NSMethodSignature *sig = [newMode methodSignatureForSelector:initSel];
-                if (sig) {
-                    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-                    [inv setSelector:initSel];
-                    [inv setTarget:newMode];
-                    int w = config.width;
-                    int h = config.height;
-                    double refresh = 60.0;
-                    [inv setArgument:&w atIndex:2];
-                    [inv setArgument:&h atIndex:3];
-                    [inv setArgument:&refresh atIndex:4];
-                    [inv invoke];
-                    __unsafe_unretained id invokeResult;
-                    [inv getReturnValue:&invokeResult];
-                    if (invokeResult) {
-                        mode = invokeResult;
-                    }
-                }
-            } else {
-                snprintf(result.errorMsg, sizeof(result.errorMsg),
-                         "failed to configure display mode: %s",
-                         [[exception reason] UTF8String]);
-                return result;
-            }
         }
 
         // Step 5: Create settings with the mode and hiDPI flag
@@ -165,26 +159,7 @@ VirtualDisplayResult CreateVirtualDisplay(VirtualDisplayConfig config) {
             return result;
         }
 
-        // Step 6: Apply settings to descriptor
-        @try {
-            SEL applySettingsSel = NSSelectorFromString(@"applySettings:");
-            if ([descriptor respondsToSelector:applySettingsSel]) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-                [descriptor performSelector:applySettingsSel withObject:settings];
-#pragma clang diagnostic pop
-            } else {
-                // Try setting settings property directly
-                [descriptor setValue:settings forKey:@"settings"];
-            }
-        } @catch (NSException *exception) {
-            snprintf(result.errorMsg, sizeof(result.errorMsg),
-                     "failed to apply settings to descriptor: %s",
-                     [[exception reason] UTF8String]);
-            return result;
-        }
-
-        // Step 7: Create CGVirtualDisplay from descriptor
+        // Step 6: Create CGVirtualDisplay from descriptor
         id display = nil;
         @try {
             SEL initWithDescSel = NSSelectorFromString(@"initWithDescriptor:");
@@ -213,6 +188,19 @@ VirtualDisplayResult CreateVirtualDisplay(VirtualDisplayConfig config) {
             snprintf(result.errorMsg, sizeof(result.errorMsg),
                      "CGVirtualDisplay creation returned nil");
             return result;
+        }
+
+        // Step 7b: Apply settings to the display (not the descriptor)
+        @try {
+            SEL applySettingsSel = NSSelectorFromString(@"applySettings:");
+            if ([display respondsToSelector:applySettingsSel]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                [display performSelector:applySettingsSel withObject:settings];
+#pragma clang diagnostic pop
+            }
+        } @catch (NSException *exception) {
+            // Non-fatal: display may work without explicit settings application
         }
 
         // Step 8: Extract the displayID

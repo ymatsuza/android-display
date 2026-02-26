@@ -1,7 +1,9 @@
 package com.androidmac.client
 
+import android.annotation.SuppressLint
 import android.os.Bundle
 import android.util.Log
+import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -10,9 +12,12 @@ import android.view.WindowInsetsController
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.androidmac.client.control.ControlClient
+import com.androidmac.client.touch.TouchEvent
+import com.androidmac.client.touch.TouchSender
 import com.androidmac.client.video.UdpReceiver
 import com.androidmac.client.video.VideoDecoder
 import com.androidmac.client.video.VideoPacket
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
@@ -49,6 +54,11 @@ class DisplayActivity : AppCompatActivity() {
     // Shared ControlClient passed from MainActivity
     private var controlClient: ControlClient? = null
 
+    // Touch support
+    private var touchSender: TouchSender? = null
+    private var touchPort: Int = 0
+    private var serverHost: String = ""
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_display)
@@ -58,6 +68,8 @@ class DisplayActivity : AppCompatActivity() {
 
         videoWidth = intent.getIntExtra("width", 1920)
         videoHeight = intent.getIntExtra("height", 1080)
+        touchPort = intent.getIntExtra("touchPort", 0)
+        serverHost = intent.getStringExtra("serverHost") ?: ""
 
         // Pick up the ControlClient set by MainActivity
         controlClient = pendingControlClient
@@ -133,6 +145,9 @@ class DisplayActivity : AppCompatActivity() {
         }
 
         Log.d(TAG, "Video pipeline started")
+
+        // Start touch pipeline after video is ready
+        startTouchPipeline()
     }
 
     private fun handlePacket(packet: VideoPacket) {
@@ -176,13 +191,82 @@ class DisplayActivity : AppCompatActivity() {
         }
     }
 
+    private fun startTouchPipeline() {
+        if (touchPort <= 0 || serverHost.isEmpty()) {
+            Log.w(TAG, "Touch not available: port=$touchPort host=$serverHost")
+            return
+        }
+
+        val sender = TouchSender()
+        touchSender = sender
+
+        lifecycleScope.launch {
+            try {
+                sender.connect(serverHost, touchPort)
+                Log.d(TAG, "Touch connected to $serverHost:$touchPort")
+                setupTouchHandling()
+            } catch (e: Exception) {
+                Log.e(TAG, "Touch connection failed: ${e.message}", e)
+            }
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupTouchHandling() {
+        surfaceView.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                    val idx = event.actionIndex
+                    sendTouchEvent(view, event, idx, TouchEvent.ACTION_DOWN)
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    for (i in 0 until event.pointerCount) {
+                        sendTouchEvent(view, event, i, TouchEvent.ACTION_MOVE)
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
+                    val idx = event.actionIndex
+                    sendTouchEvent(view, event, idx, TouchEvent.ACTION_UP)
+                }
+            }
+            true
+        }
+    }
+
+    private fun sendTouchEvent(view: View, event: MotionEvent, index: Int, action: Byte) {
+        val touchType = when (event.getToolType(index)) {
+            MotionEvent.TOOL_TYPE_STYLUS -> TouchEvent.TYPE_PEN
+            else -> TouchEvent.TYPE_FINGER
+        }
+
+        val touchEvent = TouchEvent(
+            type = touchType,
+            action = action,
+            x = (event.getX(index) / view.width.toFloat()).coerceIn(0f, 1f),
+            y = (event.getY(index) / view.height.toFloat()).coerceIn(0f, 1f),
+            pressure = event.getPressure(index).coerceIn(0f, 1f),
+            pointerId = event.getPointerId(index),
+            timestamp = System.currentTimeMillis()
+        )
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                touchSender?.send(touchEvent)
+            } catch (e: Exception) {
+                Log.e(TAG, "Touch send error: ${e.message}")
+            }
+        }
+    }
+
     private fun stopVideoPipeline() {
         receiveJob?.cancel()
         decodeJob?.cancel()
         udpReceiver?.close()
         videoDecoder?.stop()
+        touchSender?.disconnect()
         udpReceiver = null
         videoDecoder = null
+        touchSender = null
         Log.d(TAG, "Video pipeline stopped")
     }
 

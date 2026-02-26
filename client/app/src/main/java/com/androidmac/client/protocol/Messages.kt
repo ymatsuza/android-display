@@ -32,7 +32,8 @@ data class ServerHello(
     val codec: String,
     val bitrate: Int,
     val fps: Int,
-    val streamPort: Int
+    val streamPort: Int,
+    val touchPort: Int
 ) {
     companion object {
         fun fromJson(json: String): ServerHello {
@@ -43,7 +44,8 @@ data class ServerHello(
                 codec = obj.getString("codec"),
                 bitrate = obj.getInt("bitrate"),
                 fps = obj.getInt("fps"),
-                streamPort = obj.getInt("streamPort")
+                streamPort = obj.getInt("streamPort"),
+                touchPort = obj.optInt("touchPort", 0)
             )
         }
     }

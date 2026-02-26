@@ -88,6 +88,8 @@ class MainActivity : AppCompatActivity() {
                     putExtra("host", host)
                     putExtra("width", serverHello.virtualDisplay.width)
                     putExtra("height", serverHello.virtualDisplay.height)
+                    putExtra("touchPort", serverHello.touchPort)
+                    putExtra("serverHost", host)
                 }
                 startActivity(intent)
             } catch (e: Exception) {

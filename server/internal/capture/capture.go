@@ -10,7 +10,9 @@ extern void goFrameCallback(void *pixelBuffer, int width, int height, int64_t ti
 import "C"
 import (
 	"fmt"
+	"log"
 	"sync"
+	"time"
 	"unsafe"
 )
 
@@ -73,25 +75,38 @@ type Capturer struct {
 // Start begins capturing the specified display at the given frame rate.
 // Each captured frame is delivered to handler asynchronously.
 // The caller must call Stop when capture is no longer needed.
+//
+// For virtual displays, ScreenCaptureKit may need a moment to discover the
+// new display. Start retries up to 3 times with 500ms delay between attempts.
 func Start(displayID uint32, fps int, handler FrameHandler) (*Capturer, error) {
 	id := registerHandler(handler)
 
-	result := C.StartCapture(
-		C.CGDirectDisplayID(displayID),
-		C.int(fps),
-		(C.FrameCallback)(C.goFrameCallback),
-		unsafe.Pointer(id),
-	)
+	const maxRetries = 3
+	var lastErr string
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			log.Printf("capture: display %d not found, retrying (%d/%d)...", displayID, attempt+1, maxRetries)
+			time.Sleep(500 * time.Millisecond)
+		}
 
-	if result.success == 0 {
-		unregisterHandler(id)
-		return nil, fmt.Errorf("start capture: %s", C.GoString(&result.errorMsg[0]))
+		result := C.StartCapture(
+			C.CGDirectDisplayID(displayID),
+			C.int(fps),
+			(C.FrameCallback)(C.goFrameCallback),
+			unsafe.Pointer(id),
+		)
+
+		if result.success != 0 {
+			return &Capturer{
+				stream:    result.stream,
+				handlerID: id,
+			}, nil
+		}
+		lastErr = C.GoString(&result.errorMsg[0])
 	}
 
-	return &Capturer{
-		stream:    result.stream,
-		handlerID: id,
-	}, nil
+	unregisterHandler(id)
+	return nil, fmt.Errorf("start capture: %s", lastErr)
 }
 
 // Stop terminates the capture session and releases all associated resources.

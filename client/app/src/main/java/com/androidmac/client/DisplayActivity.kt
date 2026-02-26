@@ -21,6 +21,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
+import kotlin.math.cos
+import kotlin.math.sin
 
 class DisplayActivity : AppCompatActivity() {
 
@@ -245,12 +247,25 @@ class DisplayActivity : AppCompatActivity() {
             else -> TouchEvent.TYPE_FINGER
         }
 
+        val (tiltX, tiltY) = if (event.getToolType(index) == MotionEvent.TOOL_TYPE_STYLUS) {
+            val tilt = event.getAxisValue(MotionEvent.AXIS_TILT, index)
+            val orientation = event.getAxisValue(MotionEvent.AXIS_ORIENTATION, index)
+            Pair(
+                (sin(orientation.toDouble()) * sin(tilt.toDouble())).toFloat(),
+                (cos(orientation.toDouble()) * sin(tilt.toDouble())).toFloat()
+            )
+        } else {
+            Pair(0f, 0f)
+        }
+
         val touchEvent = TouchEvent(
             type = touchType,
             action = action,
             x = (event.getX(index) / view.width.toFloat()).coerceIn(0f, 1f),
             y = (event.getY(index) / view.height.toFloat()).coerceIn(0f, 1f),
             pressure = event.getPressure(index).coerceIn(0f, 1f),
+            tiltX = tiltX,
+            tiltY = tiltY,
             pointerId = event.getPointerId(index),
             timestamp = System.currentTimeMillis()
         )

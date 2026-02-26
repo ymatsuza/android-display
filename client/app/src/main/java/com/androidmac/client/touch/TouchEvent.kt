@@ -9,11 +9,13 @@ data class TouchEvent(
     val x: Float,
     val y: Float,
     val pressure: Float,
+    val tiltX: Float,
+    val tiltY: Float,
     val pointerId: Int,
     val timestamp: Long
 ) {
     companion object {
-        const val SIZE = 26
+        const val SIZE = 34
         const val TYPE_FINGER: Byte = 0
         const val TYPE_PEN: Byte = 1
         const val ACTION_DOWN: Byte = 0
@@ -28,6 +30,8 @@ data class TouchEvent(
         buf.putFloat(x)
         buf.putFloat(y)
         buf.putFloat(pressure)
+        buf.putFloat(tiltX)
+        buf.putFloat(tiltY)
         buf.putInt(pointerId)
         buf.putLong(timestamp)
         return buf.array()

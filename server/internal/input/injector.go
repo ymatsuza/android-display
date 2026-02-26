@@ -98,3 +98,37 @@ func (inj *Injector) RightMouseUp(nx, ny float32) {
 func (inj *Injector) ScrollWheel(deltaX, deltaY int32) {
 	C.InjectScrollWheel(C.int32_t(deltaX), C.int32_t(deltaY))
 }
+
+// TabletProximityEnter posts a tablet proximity-enter event.
+func (inj *Injector) TabletProximityEnter() {
+	C.InjectTabletProximityEnter()
+}
+
+// TabletProximityLeave posts a tablet proximity-leave event.
+func (inj *Injector) TabletProximityLeave() {
+	C.InjectTabletProximityLeave()
+}
+
+// TabletDown posts a tablet left-mouse-down event with pressure and tilt.
+func (inj *Injector) TabletDown(nx, ny float32, pressure float32, tiltX, tiltY float32) {
+	x, y := inj.ToScreenCoords(nx, ny)
+	C.InjectTabletDown(C.double(x), C.double(y), C.double(pressure), C.double(tiltX), C.double(tiltY))
+}
+
+// TabletUp posts a tablet left-mouse-up event with pressure and tilt.
+func (inj *Injector) TabletUp(nx, ny float32, pressure float32, tiltX, tiltY float32) {
+	x, y := inj.ToScreenCoords(nx, ny)
+	C.InjectTabletUp(C.double(x), C.double(y), C.double(pressure), C.double(tiltX), C.double(tiltY))
+}
+
+// TabletDragged posts a tablet left-mouse-dragged event with pressure and tilt.
+func (inj *Injector) TabletDragged(nx, ny float32, pressure float32, tiltX, tiltY float32) {
+	x, y := inj.ToScreenCoords(nx, ny)
+	C.InjectTabletDragged(C.double(x), C.double(y), C.double(pressure), C.double(tiltX), C.double(tiltY))
+}
+
+// TabletMoved posts a tablet mouse-moved event with pressure and tilt.
+func (inj *Injector) TabletMoved(nx, ny float32, pressure float32, tiltX, tiltY float32) {
+	x, y := inj.ToScreenCoords(nx, ny)
+	C.InjectTabletMoved(C.double(x), C.double(y), C.double(pressure), C.double(tiltX), C.double(tiltY))
+}

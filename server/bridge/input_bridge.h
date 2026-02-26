@@ -22,4 +22,11 @@ void InjectRightMouseDown(double x, double y);
 void InjectRightMouseUp(double x, double y);
 void InjectScrollWheel(int32_t deltaX, int32_t deltaY);
 
+void InjectTabletProximityEnter(void);
+void InjectTabletProximityLeave(void);
+void InjectTabletDown(double x, double y, double pressure, double tiltX, double tiltY);
+void InjectTabletUp(double x, double y, double pressure, double tiltX, double tiltY);
+void InjectTabletDragged(double x, double y, double pressure, double tiltX, double tiltY);
+void InjectTabletMoved(double x, double y, double pressure, double tiltX, double tiltY);
+
 #endif

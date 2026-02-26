@@ -2,6 +2,7 @@ package com.androidmac.client.control
 
 import android.util.DisplayMetrics
 import com.androidmac.client.protocol.ClientHello
+import com.androidmac.client.protocol.ClientReady
 import com.androidmac.client.protocol.ScreenInfo
 import com.androidmac.client.protocol.ServerHello
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +14,8 @@ import java.net.Socket
 
 class ControlClient {
     private var socket: Socket? = null
+    private var writer: PrintWriter? = null
+    private var reader: BufferedReader? = null
 
     suspend fun connect(host: String, port: Int, metrics: DisplayMetrics): ServerHello =
         withContext(Dispatchers.IO) {
@@ -20,8 +23,10 @@ class ControlClient {
             sock.tcpNoDelay = true
             socket = sock
 
-            val writer = PrintWriter(sock.getOutputStream(), true)
-            val reader = BufferedReader(InputStreamReader(sock.getInputStream()))
+            val w = PrintWriter(sock.getOutputStream(), true)
+            val r = BufferedReader(InputStreamReader(sock.getInputStream()))
+            writer = w
+            reader = r
 
             val hello = ClientHello(
                 device = android.os.Build.MODEL,
@@ -33,11 +38,22 @@ class ControlClient {
                 capabilities = listOf("touch", "pen", "pressure"),
                 codecs = listOf("h264")
             )
-            writer.println(hello.toJson())
+            w.println(hello.toJson())
 
-            val response = reader.readLine() ?: throw Exception("Server closed connection")
+            val response = r.readLine() ?: throw Exception("Server closed connection")
             ServerHello.fromJson(response)
         }
+
+    /**
+     * Send ClientReady message to the server with the actual UDP port.
+     * Must be called after connect() and after binding the UDP socket.
+     */
+    suspend fun sendReady(udpPort: Int) = withContext(Dispatchers.IO) {
+        val w = writer ?: throw IllegalStateException("Not connected")
+        w.println(ClientReady(udpPort).toJson())
+    }
+
+    fun getSocket(): Socket? = socket
 
     fun disconnect() {
         try {
@@ -45,5 +61,7 @@ class ControlClient {
         } catch (_: Exception) {
         }
         socket = null
+        writer = null
+        reader = null
     }
 }

@@ -6,13 +6,15 @@ import (
 	"log"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/luke/android-mac/server/internal/protocol"
 )
 
 type ClientConn struct {
-	Conn  net.Conn
-	Hello protocol.ClientHello
+	Conn    net.Conn
+	Hello   protocol.ClientHello
+	UDPPort int // actual UDP port reported by the client via ClientReady
 }
 
 type Server struct {
@@ -69,8 +71,13 @@ func (s *Server) AcceptLoop() {
 }
 
 func (s *Server) handleConn(conn net.Conn) {
-	var hello protocol.ClientHello
+	// I6: Enforce a 10-second deadline for the entire handshake phase.
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+
 	decoder := json.NewDecoder(conn)
+
+	// Step 1: Read ClientHello
+	var hello protocol.ClientHello
 	if err := decoder.Decode(&hello); err != nil {
 		log.Printf("handshake read error: %v", err)
 		conn.Close()
@@ -87,6 +94,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 	}
 
+	// Step 2: Send ServerHello
 	response := protocol.ServerHello{
 		VirtualDisplay: protocol.DisplayInfo{
 			Width:  hello.Screen.Width,
@@ -98,14 +106,26 @@ func (s *Server) handleConn(conn net.Conn) {
 		StreamPort: s.streamPort,
 	}
 
-	encoder := json.NewEncoder(conn)
-	if err := encoder.Encode(response); err != nil {
+	enc := json.NewEncoder(conn)
+	if err := enc.Encode(response); err != nil {
 		log.Printf("handshake write error: %v", err)
 		conn.Close()
 		return
 	}
 
-	client := ClientConn{Conn: conn, Hello: hello}
+	// Step 3: Read ClientReady to get the actual UDP port
+	var ready protocol.ClientReady
+	if err := decoder.Decode(&ready); err != nil {
+		log.Printf("client ready read error: %v", err)
+		conn.Close()
+		return
+	}
+	log.Printf("client ready: UDP port %d", ready.UDPPort)
+
+	// Clear the read deadline after successful handshake.
+	conn.SetReadDeadline(time.Time{})
+
+	client := ClientConn{Conn: conn, Hello: hello, UDPPort: ready.UDPPort}
 	s.mu.Lock()
 	s.clients = append(s.clients, client)
 	s.mu.Unlock()

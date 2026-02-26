@@ -81,9 +81,11 @@ class MainActivity : AppCompatActivity() {
 
                 Log.d(TAG, "Handshake complete: $serverHello")
 
+                // Store the ControlClient reference for DisplayActivity
+                DisplayActivity.pendingControlClient = controlClient
+
                 val intent = Intent(this@MainActivity, DisplayActivity::class.java).apply {
                     putExtra("host", host)
-                    putExtra("streamPort", serverHello.streamPort)
                     putExtra("width", serverHello.virtualDisplay.width)
                     putExtra("height", serverHello.virtualDisplay.height)
                 }

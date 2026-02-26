@@ -25,6 +25,7 @@ type NALUnit struct {
 	Data       []byte
 	IsKeyframe bool
 	Timestamp  int64 // presentation timestamp in microseconds
+	NALType    byte  // NAL unit type: 0x07=SPS, 0x08=PPS, 0x05=IDR, other=non-IDR
 }
 
 // NALHandler is a callback function invoked for each encoded NAL unit.
@@ -64,10 +65,18 @@ func goEncodedCallback(nalData *C.uint8_t, nalSize C.int, isKeyframe C.int, time
 	goData := make([]byte, size)
 	C.memcpy(unsafe.Pointer(&goData[0]), unsafe.Pointer(nalData), C.size_t(size))
 
+	// Parse NAL unit type from the first byte after the Annex-B start code
+	// (00 00 00 01). The NAL type is in the lower 5 bits.
+	var nalType byte
+	if size > 4 {
+		nalType = goData[4] & 0x1F
+	}
+
 	fn(NALUnit{
 		Data:       goData,
 		IsKeyframe: isKeyframe != 0,
 		Timestamp:  int64(timestamp),
+		NALType:    nalType,
 	})
 }
 

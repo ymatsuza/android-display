@@ -48,3 +48,11 @@ data class ServerHello(
         }
     }
 }
+
+data class ClientReady(val udpPort: Int) {
+    fun toJson(): String {
+        val obj = JSONObject()
+        obj.put("udpPort", udpPort)
+        return obj.toString()
+    }
+}

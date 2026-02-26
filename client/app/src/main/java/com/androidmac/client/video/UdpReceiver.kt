@@ -48,10 +48,26 @@ class UdpReceiver(private val port: Int) {
         private const val MAX_PACKET = 1500
     }
 
-    suspend fun receiveLoop(onPacket: (VideoPacket) -> Unit) = withContext(Dispatchers.IO) {
+    /**
+     * Bind the UDP socket immediately and return the actual local port.
+     * Pass port=0 to let the OS auto-assign an available port.
+     */
+    fun bind(): Int {
         val sock = DatagramSocket(port)
         sock.receiveBufferSize = 2 * 1024 * 1024
         socket = sock
+        val localPort = sock.localPort
+        Log.d(TAG, "UDP socket bound to port $localPort")
+        return localPort
+    }
+
+    /**
+     * Returns the actual port the socket is bound to, or -1 if not bound.
+     */
+    fun getLocalPort(): Int = socket?.localPort ?: -1
+
+    suspend fun receiveLoop(onPacket: (VideoPacket) -> Unit) = withContext(Dispatchers.IO) {
+        val sock = socket ?: throw IllegalStateException("Socket not bound. Call bind() first.")
 
         val buf = ByteArray(MAX_PACKET)
         val packet = DatagramPacket(buf, buf.size)

@@ -65,9 +65,16 @@ func (h *PacketHeader) Unmarshal(buf []byte) error {
 
 // MarshalPacket serializes the full packet (header + payload) into a
 // single byte slice ready for UDP transmission.
+// I7: Single allocation instead of Marshal() + append().
 func (p *Packet) MarshalPacket() []byte {
-	hdr := p.Header.Marshal()
-	return append(hdr, p.Payload...)
+	buf := make([]byte, PacketHeaderSize+len(p.Payload))
+	binary.BigEndian.PutUint32(buf[0:4], p.Header.Sequence)
+	binary.BigEndian.PutUint64(buf[4:12], p.Header.Timestamp)
+	buf[12] = p.Header.FrameType
+	buf[13] = p.Header.FragIndex
+	buf[14] = p.Header.FragTotal
+	copy(buf[PacketHeaderSize:], p.Payload)
+	return buf
 }
 
 // UnmarshalPacket deserializes a full packet from raw UDP bytes.

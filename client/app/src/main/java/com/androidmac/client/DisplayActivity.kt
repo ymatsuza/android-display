@@ -9,6 +9,7 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.androidmac.client.control.ControlClient
 import com.androidmac.client.video.UdpReceiver
 import com.androidmac.client.video.VideoDecoder
 import com.androidmac.client.video.VideoPacket
@@ -20,6 +21,13 @@ class DisplayActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "DisplayActivity"
+
+        /**
+         * Set by MainActivity before launching DisplayActivity so the control
+         * connection can be reused to send ClientReady.
+         */
+        @Volatile
+        var pendingControlClient: ControlClient? = null
     }
 
     private lateinit var surfaceView: SurfaceView
@@ -30,12 +38,16 @@ class DisplayActivity : AppCompatActivity() {
 
     // Fragment reassembly state
     private var currentSequence: Long = -1
+    private var currentFrameType: Byte = 0
+    private var currentTimestamp: Long = 0
     private val fragments = mutableMapOf<Int, ByteArray>()
     private var expectedFragTotal: Int = 0
 
-    private var streamPort: Int = 0
     private var videoWidth: Int = 0
     private var videoHeight: Int = 0
+
+    // Shared ControlClient passed from MainActivity
+    private var controlClient: ControlClient? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -44,11 +56,14 @@ class DisplayActivity : AppCompatActivity() {
         // Go immersive fullscreen
         enterImmersiveMode()
 
-        streamPort = intent.getIntExtra("streamPort", 0)
         videoWidth = intent.getIntExtra("width", 1920)
         videoHeight = intent.getIntExtra("height", 1080)
 
-        Log.d(TAG, "Display config: ${videoWidth}x${videoHeight}, UDP port=$streamPort")
+        // Pick up the ControlClient set by MainActivity
+        controlClient = pendingControlClient
+        pendingControlClient = null
+
+        Log.d(TAG, "Display config: ${videoWidth}x${videoHeight}")
 
         surfaceView = findViewById(R.id.surfaceView)
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
@@ -93,9 +108,23 @@ class DisplayActivity : AppCompatActivity() {
             decoder.decodeLoop()
         }
 
-        // Initialize and start UDP receiver
-        val receiver = UdpReceiver(streamPort)
+        // C1: Bind UDP to port 0 (auto-assign) to avoid port conflicts,
+        // then send ClientReady with the actual port back to the server.
+        val receiver = UdpReceiver(0)
+        val actualPort = receiver.bind()
         udpReceiver = receiver
+
+        Log.d(TAG, "UDP bound to port $actualPort")
+
+        // Send the actual UDP port to the server via the TCP control connection
+        lifecycleScope.launch {
+            try {
+                controlClient?.sendReady(actualPort)
+                Log.d(TAG, "Sent ClientReady with UDP port $actualPort")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send ClientReady: ${e.message}", e)
+            }
+        }
 
         receiveJob = lifecycleScope.launch {
             receiver.receiveLoop { packet ->
@@ -108,8 +137,8 @@ class DisplayActivity : AppCompatActivity() {
 
     private fun handlePacket(packet: VideoPacket) {
         if (packet.fragTotal <= 1) {
-            // Single-fragment NAL unit, submit directly
-            videoDecoder?.submitNAL(packet.payload)
+            // Single-fragment NAL unit, submit directly with frame type and timestamp
+            videoDecoder?.submitNAL(packet.payload, packet.frameType, packet.timestamp)
             return
         }
 
@@ -118,6 +147,8 @@ class DisplayActivity : AppCompatActivity() {
             if (packet.sequence != currentSequence) {
                 // New frame, reset
                 currentSequence = packet.sequence
+                currentFrameType = packet.frameType
+                currentTimestamp = packet.timestamp
                 fragments.clear()
                 expectedFragTotal = packet.fragTotal
             }
@@ -137,8 +168,10 @@ class DisplayActivity : AppCompatActivity() {
                         return
                     }
                 }
+                val ft = currentFrameType
+                val ts = currentTimestamp
                 fragments.clear()
-                videoDecoder?.submitNAL(assembled.toByteArray())
+                videoDecoder?.submitNAL(assembled.toByteArray(), ft, ts)
             }
         }
     }

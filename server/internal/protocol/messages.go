@@ -28,6 +28,12 @@ type DisplayInfo struct {
 	Height int `json:"height"`
 }
 
+// ClientReady is sent by Android to Mac after binding the UDP socket.
+// It reports the actual listening port so the server can stream to it.
+type ClientReady struct {
+	UDPPort int `json:"udpPort"`
+}
+
 // Heartbeat is sent periodically on the control channel
 type Heartbeat struct {
 	Timestamp int64 `json:"timestamp"`

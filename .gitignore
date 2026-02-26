@@ -1,0 +1,21 @@
+# Go
+server/android-mac-server
+*.exe
+*.test
+*.out
+
+# Android
+client/.gradle/
+client/app/build/
+client/build/
+client/local.properties
+*.apk
+*.aab
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store

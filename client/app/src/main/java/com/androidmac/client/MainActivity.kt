@@ -85,7 +85,6 @@ class MainActivity : AppCompatActivity() {
                 DisplayActivity.pendingControlClient = controlClient
 
                 val intent = Intent(this@MainActivity, DisplayActivity::class.java).apply {
-                    putExtra("host", host)
                     putExtra("width", serverHello.virtualDisplay.width)
                     putExtra("height", serverHello.virtualDisplay.height)
                     putExtra("touchPort", serverHello.touchPort)

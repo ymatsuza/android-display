@@ -58,6 +58,7 @@ class DisplayActivity : AppCompatActivity() {
     private var touchSender: TouchSender? = null
     private var touchPort: Int = 0
     private var serverHost: String = ""
+    private val touchDispatcher = Dispatchers.IO.limitedParallelism(1)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -224,7 +225,12 @@ class DisplayActivity : AppCompatActivity() {
                         sendTouchEvent(view, event, i, TouchEvent.ACTION_MOVE)
                     }
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
+                MotionEvent.ACTION_CANCEL -> {
+                    for (i in 0 until event.pointerCount) {
+                        sendTouchEvent(view, event, i, TouchEvent.ACTION_UP)
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                     val idx = event.actionIndex
                     sendTouchEvent(view, event, idx, TouchEvent.ACTION_UP)
                 }
@@ -249,7 +255,7 @@ class DisplayActivity : AppCompatActivity() {
             timestamp = System.currentTimeMillis()
         )
 
-        lifecycleScope.launch(Dispatchers.IO) {
+        lifecycleScope.launch(touchDispatcher) {
             try {
                 touchSender?.send(touchEvent)
             } catch (e: Exception) {

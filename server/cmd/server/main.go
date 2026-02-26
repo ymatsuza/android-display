@@ -131,11 +131,13 @@ func startPipeline(ctx context.Context, cancel context.CancelFunc, width, height
 			injector.ScrollWheel(me.ScrollX, me.ScrollY)
 		}
 	})
+	defer gesture.Close()
 
 	// Wire touch events → gesture recognizer
 	touchServer.OnEvent(func(e touch.Event) {
 		gesture.HandleEvent(e)
 	})
+	defer touchServer.OnEvent(nil)
 	log.Println("touch input enabled")
 
 	// UDP streamer

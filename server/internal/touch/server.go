@@ -12,6 +12,7 @@ type EventHandler func(Event)
 
 type Server struct {
 	listener net.Listener
+	mu       sync.Mutex // protects handler
 	handler  EventHandler
 	done     chan struct{}
 	wg       sync.WaitGroup
@@ -33,7 +34,15 @@ func (s *Server) Port() int {
 }
 
 func (s *Server) OnEvent(handler EventHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.handler = handler
+}
+
+func (s *Server) getHandler() EventHandler {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.handler
 }
 
 func (s *Server) AcceptLoop() {
@@ -61,14 +70,14 @@ func (s *Server) handleConn(conn net.Conn) {
 	for {
 		_, err := io.ReadFull(conn, buf)
 		if err != nil {
-			if err != io.EOF {
+			if err != io.EOF && err != io.ErrUnexpectedEOF {
 				log.Printf("touch read error: %v", err)
 			}
 			return
 		}
-		if s.handler != nil {
+		if h := s.getHandler(); h != nil {
 			event := Unmarshal(buf)
-			s.handler(event)
+			h(event)
 		}
 	}
 }

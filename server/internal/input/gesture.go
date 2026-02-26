@@ -75,6 +75,18 @@ func NewGestureRecognizer(handler MouseEventHandler) *GestureRecognizer {
 	}
 }
 
+// Close stops any pending timers owned by the recognizer.
+func (gr *GestureRecognizer) Close() {
+	gr.mu.Lock()
+	defer gr.mu.Unlock()
+	if gr.longPressTimer != nil {
+		gr.longPressTimer.Stop()
+	}
+	if gr.tapTimer != nil {
+		gr.tapTimer.Stop()
+	}
+}
+
 // HandleEvent processes a touch event from the Android client.
 func (gr *GestureRecognizer) HandleEvent(event touch.Event) {
 	gr.mu.Lock()

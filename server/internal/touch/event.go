@@ -20,6 +20,16 @@ const (
 	TouchActionUp   TouchAction = 2
 )
 
+// EventSize is the fixed byte size of a serialized touch event.
+//
+// Layout (26 bytes, big-endian):
+//   Byte  0:     Type      (uint8)
+//   Byte  1:     Action    (uint8)
+//   Bytes 2-5:   X         (float32)
+//   Bytes 6-9:   Y         (float32)
+//   Bytes 10-13: Pressure  (float32)
+//   Bytes 14-17: PointerID (int32)
+//   Bytes 18-25: Timestamp (int64, milliseconds)
 const EventSize = 26
 
 type Event struct {

@@ -6,8 +6,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.net.DatagramPacket
 import java.net.DatagramSocket
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 data class VideoPacket(
     val sequence: Long,
@@ -44,7 +42,6 @@ class UdpReceiver(private val port: Int) {
 
     companion object {
         private const val TAG = "UdpReceiver"
-        private const val HEADER_SIZE = 17
         private const val MAX_PACKET = 1500
     }
 
@@ -75,20 +72,10 @@ class UdpReceiver(private val port: Int) {
         while (isActive) {
             try {
                 sock.receive(packet)
-                if (packet.length < HEADER_SIZE) continue
+                if (packet.length < PacketParser.HEADER_SIZE) continue
 
-                val bb = ByteBuffer.wrap(buf, 0, packet.length).order(ByteOrder.BIG_ENDIAN)
-                val seq = bb.int.toLong() and 0xFFFFFFFFL
-                val ts = bb.long
-                val frameType = bb.get()
-                val fragIndex = bb.short.toInt() and 0xFFFF
-                val fragTotal = bb.short.toInt() and 0xFFFF
-
-                val payloadSize = packet.length - HEADER_SIZE
-                val payload = ByteArray(payloadSize)
-                System.arraycopy(buf, HEADER_SIZE, payload, 0, payloadSize)
-
-                onPacket(VideoPacket(seq, ts, frameType, fragIndex, fragTotal, payload))
+                val videoPacket = PacketParser.parse(buf, 0, packet.length)
+                onPacket(videoPacket)
             } catch (e: Exception) {
                 if (isActive) Log.e(TAG, "Receive error: ${e.message}")
             }

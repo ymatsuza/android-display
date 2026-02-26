@@ -17,36 +17,45 @@ class ControlClient {
     private var writer: PrintWriter? = null
     private var reader: BufferedReader? = null
 
-    suspend fun connect(host: String, port: Int, metrics: DisplayMetrics): ServerHello =
-        withContext(Dispatchers.IO) {
-            val sock = Socket(host, port)
-            sock.tcpNoDelay = true
-            socket = sock
+    /**
+     * Connect to the server and perform the handshake.
+     * @param connectionType "wifi" or "usb"
+     */
+    suspend fun connect(
+        host: String,
+        port: Int,
+        metrics: DisplayMetrics,
+        connectionType: String = "wifi"
+    ): ServerHello = withContext(Dispatchers.IO) {
+        val sock = Socket(host, port)
+        sock.tcpNoDelay = true
+        socket = sock
 
-            val w = PrintWriter(sock.getOutputStream(), true)
-            val r = BufferedReader(InputStreamReader(sock.getInputStream()))
-            writer = w
-            reader = r
+        val w = PrintWriter(sock.getOutputStream(), true)
+        val r = BufferedReader(InputStreamReader(sock.getInputStream()))
+        writer = w
+        reader = r
 
-            val hello = ClientHello(
-                device = android.os.Build.MODEL,
-                screen = ScreenInfo(
-                    metrics.widthPixels,
-                    metrics.heightPixels,
-                    metrics.densityDpi
-                ),
-                capabilities = listOf("touch", "pen", "pressure"),
-                codecs = listOf("h264")
-            )
-            w.println(hello.toJson())
+        val hello = ClientHello(
+            device = android.os.Build.MODEL,
+            screen = ScreenInfo(
+                metrics.widthPixels,
+                metrics.heightPixels,
+                metrics.densityDpi
+            ),
+            capabilities = listOf("touch", "pen", "pressure"),
+            codecs = listOf("h264"),
+            connectionType = connectionType
+        )
+        w.println(hello.toJson())
 
-            val response = r.readLine() ?: throw Exception("Server closed connection")
-            ServerHello.fromJson(response)
-        }
+        val response = r.readLine() ?: throw Exception("Server closed connection")
+        ServerHello.fromJson(response)
+    }
 
     /**
      * Send ClientReady message to the server with the actual UDP port.
-     * Must be called after connect() and after binding the UDP socket.
+     * For USB mode, pass udpPort=0 (video uses TCP instead).
      */
     suspend fun sendReady(udpPort: Int) = withContext(Dispatchers.IO) {
         val w = writer ?: throw IllegalStateException("Not connected")

@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/luke/android-mac/server/internal/adb"
 	"github.com/luke/android-mac/server/internal/capture"
 	"github.com/luke/android-mac/server/internal/control"
 	"github.com/luke/android-mac/server/internal/discovery"
@@ -22,9 +23,15 @@ import (
 
 const (
 	controlPort    = 9000
-	defaultFPS     = 30
-	defaultBitrate = 4_000_000
+	defaultFPS     = 60
+	defaultBitrate = 8_000_000
 )
+
+// adbManager is set up at startup if ADB is available.
+var adbManager *adb.Manager
+
+// tcpVideoServer is always started for USB mode support.
+var tcpVideoServer *stream.TCPVideoServer
 
 func main() {
 	log.Println("android-mac server starting...")
@@ -38,7 +45,38 @@ func main() {
 	go touchServer.AcceptLoop()
 	log.Printf("touch server on port %d", touchServer.Port())
 
-	// 2. Start mDNS advertisement
+	// 2. Start TCP video server for USB mode (auto-assign port)
+	tcpVideoServer, err = stream.NewTCPVideoServer(0)
+	if err != nil {
+		log.Fatalf("TCP video server failed: %v", err)
+	}
+	defer tcpVideoServer.Close()
+	log.Printf("TCP video server on port %d", tcpVideoServer.Port())
+
+	// 3. Set up ADB reverse forwarding if device is connected
+	adbManager, err = adb.NewManager()
+	if err != nil {
+		log.Printf("ADB not available: %v (USB connections disabled)", err)
+	} else if adbManager.HasDevice() {
+		// Clean up any stale reverse forwarding from previous runs
+		adbManager.RemoveAllReverse()
+
+		// Set up reverse forwarding for all ports
+		if err := adbManager.SetupReverse(controlPort); err != nil {
+			log.Printf("ADB reverse control port failed: %v", err)
+		}
+		if err := adbManager.SetupReverse(touchServer.Port()); err != nil {
+			log.Printf("ADB reverse touch port failed: %v", err)
+		}
+		if err := adbManager.SetupReverse(tcpVideoServer.Port()); err != nil {
+			log.Printf("ADB reverse video port failed: %v", err)
+		}
+		log.Println("ADB reverse forwarding enabled (USB connections ready)")
+	} else {
+		log.Println("ADB available but no device connected")
+	}
+
+	// 4. Start mDNS advertisement
 	hostname, _ := os.Hostname()
 	mdns, err := discovery.NewService(hostname, controlPort)
 	if err != nil {
@@ -47,21 +85,19 @@ func main() {
 	defer mdns.Stop()
 	log.Printf("mDNS advertising on port %d", controlPort)
 
-	// 3. Start TCP control server
+	// 5. Start TCP control server
 	ctrlServer, err := control.NewServer(controlPort)
 	if err != nil {
 		log.Fatalf("control server failed: %v", err)
 	}
 	defer ctrlServer.Stop()
 	ctrlServer.SetTouchPort(touchServer.Port())
+	ctrlServer.SetVideoPort(tcpVideoServer.Port())
 
-	// 4. On client connect → start the capture-encode-stream pipeline
+	// 6. On client connect → start the capture-encode-stream pipeline
 	ctrlServer.OnClient(func(client control.ClientConn) {
 		w := client.Hello.Screen.Width
 		h := client.Hello.Screen.Height
-		remoteAddr := client.Conn.RemoteAddr().String()
-		host, _, _ := net.SplitHostPort(remoteAddr)
-		targetAddr := fmt.Sprintf("%s:%d", host, client.UDPPort)
 
 		ctx, cancel := context.WithCancel(context.Background())
 
@@ -81,23 +117,64 @@ func main() {
 			}
 		}()
 
-		go startPipeline(ctx, cancel, w, h, targetAddr, touchServer)
+		// Determine video transport based on connection type
+		if client.Hello.IsUSB() {
+			go startPipelineUSB(ctx, cancel, w, h, touchServer)
+		} else {
+			remoteAddr := client.Conn.RemoteAddr().String()
+			host, _, _ := net.SplitHostPort(remoteAddr)
+			targetAddr := fmt.Sprintf("%s:%d", host, client.UDPPort)
+			go startPipelineWiFi(ctx, cancel, w, h, targetAddr, touchServer)
+		}
 	})
 
 	go ctrlServer.AcceptLoop()
 	log.Printf("control server on port %d — waiting for connections...", controlPort)
 
-	// 5. Wait for SIGINT/SIGTERM
+	// 7. Wait for SIGINT/SIGTERM
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 	log.Println("shutting down...")
+
+	// Clean up ADB reverse forwarding
+	if adbManager != nil {
+		adbManager.RemoveAllReverse()
+	}
 }
 
-func startPipeline(ctx context.Context, cancel context.CancelFunc, width, height int, targetAddr string, touchServer *touch.Server) {
+// startPipelineWiFi starts the capture-encode-stream pipeline using UDP transport.
+func startPipelineWiFi(ctx context.Context, cancel context.CancelFunc, width, height int, targetAddr string, touchServer *touch.Server) {
 	defer cancel()
-	log.Printf("starting pipeline: %dx%d → %s", width, height, targetAddr)
+	log.Printf("starting WiFi pipeline: %dx%d → %s", width, height, targetAddr)
 
+	// UDP streamer
+	udpStreamer, err := stream.NewUDPStreamer(targetAddr)
+	if err != nil {
+		log.Printf("UDP streamer error: %v", err)
+		return
+	}
+	defer udpStreamer.Close()
+
+	startPipelineCommon(ctx, cancel, width, height, udpStreamer, touchServer)
+}
+
+// startPipelineUSB starts the capture-encode-stream pipeline using TCP transport.
+func startPipelineUSB(ctx context.Context, cancel context.CancelFunc, width, height int, touchServer *touch.Server) {
+	defer cancel()
+	log.Printf("starting USB pipeline: %dx%d (TCP video)", width, height)
+
+	// Wait for client to connect to TCP video port
+	if err := tcpVideoServer.AcceptOne(); err != nil {
+		log.Printf("TCP video accept error: %v", err)
+		return
+	}
+
+	startPipelineCommon(ctx, cancel, width, height, tcpVideoServer, touchServer)
+}
+
+// startPipelineCommon contains the shared pipeline logic for both WiFi and USB modes.
+func startPipelineCommon(ctx context.Context, cancel context.CancelFunc, width, height int, videoStreamer stream.Streamer, touchServer *touch.Server) {
 	// Virtual display
 	vd, err := display.New(display.Config{
 		Width:  width,
@@ -153,14 +230,6 @@ func startPipeline(ctx context.Context, cancel context.CancelFunc, width, height
 	defer touchServer.OnEvent(nil)
 	log.Println("touch input enabled")
 
-	// UDP streamer
-	streamer, err := stream.NewUDPStreamer(targetAddr)
-	if err != nil {
-		log.Printf("streamer error: %v", err)
-		return
-	}
-	defer streamer.Close()
-
 	// H.264 encoder
 	enc, err := encoder.New(encoder.Config{
 		Width:   width,
@@ -179,7 +248,7 @@ func startPipeline(ctx context.Context, cancel context.CancelFunc, width, height
 		default:
 			ft = stream.FrameTypeP
 		}
-		if err := streamer.SendFrame(nal.Data, ft); err != nil {
+		if err := videoStreamer.SendFrame(nal.Data, ft); err != nil {
 			log.Printf("stream send error: %v", err)
 		}
 	})

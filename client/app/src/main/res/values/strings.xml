@@ -1,3 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">AndroidMac</string>
+    <string name="notification_channel_name">延伸螢幕服務</string>
+    <string name="notification_channel_desc">延伸螢幕連線中的通知</string>
+    <string name="notification_disconnect">中斷連線</string>
+    <string name="notification_connected">已連線</string>
+    <string name="notification_connecting">連線中…</string>
+    <string name="notification_stats_format">已連線 | FPS: %1$.0f | 丟包: %2$.1f%%</string>
 </resources>

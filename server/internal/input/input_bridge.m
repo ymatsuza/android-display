@@ -16,52 +16,48 @@ bool CheckAccessibilityPermission(void) {
     return AXIsProcessTrusted();
 }
 
-void InjectMouseMove(double x, double y) {
-    CGEventRef event = CGEventCreateMouseEvent(NULL, kCGEventMouseMoved, CGPointMake(x, y), kCGMouseButtonLeft);
+// Helper: warp cursor then post a mouse event with absolute positioning.
+// Step 1 – CGWarpMouseCursorPosition teleports the cursor to the exact
+//          target without generating any event (bypasses HID acceleration).
+// Step 2 – CGAssociateMouseAndMouseCursorPosition(true) immediately
+//          re-associates mouse hardware so the cursor doesn't freeze.
+// Step 3 – Post the CGEvent at the same position with zeroed deltas.
+//          Since the cursor is already at the target, no drift can occur.
+// This is the standard approach used by VNC servers (OSXvnc, macVNC).
+static void PostAbsoluteMouseEvent(CGEventType type, CGPoint point, CGMouseButton button) {
+    CGWarpMouseCursorPosition(point);
+    CGAssociateMouseAndMouseCursorPosition(true);
+    CGEventRef event = CGEventCreateMouseEvent(NULL, type, point, button);
     if (event) {
+        CGEventSetIntegerValueField(event, kCGMouseEventDeltaX, 0);
+        CGEventSetIntegerValueField(event, kCGMouseEventDeltaY, 0);
         CGEventPost(kCGHIDEventTap, event);
         CFRelease(event);
     }
+}
+
+void InjectMouseMove(double x, double y) {
+    PostAbsoluteMouseEvent(kCGEventMouseMoved, CGPointMake(x, y), kCGMouseButtonLeft);
 }
 
 void InjectLeftMouseDown(double x, double y) {
-    CGEventRef event = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseDown, CGPointMake(x, y), kCGMouseButtonLeft);
-    if (event) {
-        CGEventPost(kCGHIDEventTap, event);
-        CFRelease(event);
-    }
+    PostAbsoluteMouseEvent(kCGEventLeftMouseDown, CGPointMake(x, y), kCGMouseButtonLeft);
 }
 
 void InjectLeftMouseUp(double x, double y) {
-    CGEventRef event = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseUp, CGPointMake(x, y), kCGMouseButtonLeft);
-    if (event) {
-        CGEventPost(kCGHIDEventTap, event);
-        CFRelease(event);
-    }
+    PostAbsoluteMouseEvent(kCGEventLeftMouseUp, CGPointMake(x, y), kCGMouseButtonLeft);
 }
 
 void InjectLeftMouseDragged(double x, double y) {
-    CGEventRef event = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseDragged, CGPointMake(x, y), kCGMouseButtonLeft);
-    if (event) {
-        CGEventPost(kCGHIDEventTap, event);
-        CFRelease(event);
-    }
+    PostAbsoluteMouseEvent(kCGEventLeftMouseDragged, CGPointMake(x, y), kCGMouseButtonLeft);
 }
 
 void InjectRightMouseDown(double x, double y) {
-    CGEventRef event = CGEventCreateMouseEvent(NULL, kCGEventRightMouseDown, CGPointMake(x, y), kCGMouseButtonRight);
-    if (event) {
-        CGEventPost(kCGHIDEventTap, event);
-        CFRelease(event);
-    }
+    PostAbsoluteMouseEvent(kCGEventRightMouseDown, CGPointMake(x, y), kCGMouseButtonRight);
 }
 
 void InjectRightMouseUp(double x, double y) {
-    CGEventRef event = CGEventCreateMouseEvent(NULL, kCGEventRightMouseUp, CGPointMake(x, y), kCGMouseButtonRight);
-    if (event) {
-        CGEventPost(kCGHIDEventTap, event);
-        CFRelease(event);
-    }
+    PostAbsoluteMouseEvent(kCGEventRightMouseUp, CGPointMake(x, y), kCGMouseButtonRight);
 }
 
 void InjectScrollWheel(int32_t deltaX, int32_t deltaY) {
@@ -113,8 +109,14 @@ void InjectTabletProximityLeave(void) {
 }
 
 static void InjectTabletEvent(CGEventType eventType, double x, double y, double pressure, double tiltX, double tiltY) {
-    CGEventRef event = CGEventCreateMouseEvent(NULL, eventType, CGPointMake(x, y), kCGMouseButtonLeft);
+    CGPoint point = CGPointMake(x, y);
+    // Warp cursor first to bypass HID acceleration (same pattern as mouse events)
+    CGWarpMouseCursorPosition(point);
+    CGAssociateMouseAndMouseCursorPosition(true);
+    CGEventRef event = CGEventCreateMouseEvent(NULL, eventType, point, kCGMouseButtonLeft);
     if (event) {
+        CGEventSetIntegerValueField(event, kCGMouseEventDeltaX, 0);
+        CGEventSetIntegerValueField(event, kCGMouseEventDeltaY, 0);
         CGEventSetIntegerValueField(event, kCGMouseEventSubtype, kCGEventMouseSubtypeTabletPoint);
         CGEventSetIntegerValueField(event, kCGTabletEventPointPressure, (int64_t)(pressure * 65535.0));
         CGEventSetDoubleValueField(event, kCGTabletEventTiltX, tiltX);

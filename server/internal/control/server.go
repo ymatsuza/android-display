@@ -14,7 +14,7 @@ import (
 type ClientConn struct {
 	Conn    net.Conn
 	Hello   protocol.ClientHello
-	UDPPort int // actual UDP port reported by the client via ClientReady
+	UDPPort int // actual UDP port reported by the client via ClientReady (0 for USB)
 }
 
 type Server struct {
@@ -23,6 +23,7 @@ type Server struct {
 	mu         sync.Mutex
 	streamPort int
 	touchPort  int
+	videoPort  int // TCP video port for USB mode
 	onClient   func(ClientConn)
 	done       chan struct{}
 }
@@ -53,6 +54,10 @@ func (s *Server) SetStreamPort(port int) {
 
 func (s *Server) SetTouchPort(port int) {
 	s.touchPort = port
+}
+
+func (s *Server) SetVideoPort(port int) {
+	s.videoPort = port
 }
 
 func (s *Server) OnClient(fn func(ClientConn)) {
@@ -89,7 +94,11 @@ func (s *Server) handleConn(conn net.Conn) {
 		return
 	}
 
-	log.Printf("client connected: %s (%dx%d)", hello.Device, hello.Screen.Width, hello.Screen.Height)
+	connType := "WiFi"
+	if hello.IsUSB() {
+		connType = "USB"
+	}
+	log.Printf("client connected: %s (%dx%d) [%s]", hello.Device, hello.Screen.Width, hello.Screen.Height, connType)
 
 	codec := "h264"
 	for _, c := range hello.Codecs {
@@ -110,6 +119,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		FPS:        60,
 		StreamPort: s.streamPort,
 		TouchPort:  s.touchPort,
+		VideoPort:  s.videoPort,
 	}
 
 	enc := json.NewEncoder(conn)
@@ -126,7 +136,11 @@ func (s *Server) handleConn(conn net.Conn) {
 		conn.Close()
 		return
 	}
-	log.Printf("client ready: UDP port %d", ready.UDPPort)
+	if hello.IsUSB() {
+		log.Println("client ready: USB mode (TCP video)")
+	} else {
+		log.Printf("client ready: UDP port %d", ready.UDPPort)
+	}
 
 	// Clear the read deadline after successful handshake.
 	conn.SetReadDeadline(time.Time{})

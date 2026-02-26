@@ -2,11 +2,10 @@ package com.androidmac.client.video
 
 import android.media.MediaCodec
 import android.media.MediaFormat
+import android.os.Handler
+import android.os.HandlerThread
 import android.util.Log
 import android.view.Surface
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
@@ -15,18 +14,34 @@ import java.util.concurrent.ConcurrentLinkedQueue
  */
 data class NALEntry(val data: ByteArray, val frameType: Byte, val timestamp: Long)
 
+/**
+ * H.264 video decoder using MediaCodec async callback mode.
+ *
+ * Async callback eliminates the 10ms polling loop used in synchronous mode,
+ * reducing decode latency by 10–20ms per frame. Input buffers are fed
+ * immediately when both a NAL unit and a codec buffer are available.
+ */
 class VideoDecoder(
     private val width: Int,
     private val height: Int,
     private val surface: Surface
 ) {
     private var codec: MediaCodec? = null
+    private var callbackThread: HandlerThread? = null
+
+    // Thread-safe queues for matching NALs with codec input buffers.
+    // When a NAL arrives but no buffer is free → NAL waits in nalQueue.
+    // When a buffer is free but no NAL is ready → index waits in bufferQueue.
     private val nalQueue = ConcurrentLinkedQueue<NALEntry>()
+    private val bufferQueue = ConcurrentLinkedQueue<Int>()
+
+    // Synchronizes the check-and-act between nalQueue and bufferQueue
+    // to prevent the race where both queues hold items that never meet.
+    private val feedLock = Any()
 
     companion object {
         private const val TAG = "VideoDecoder"
         private const val MIME = "video/avc"
-        private const val TIMEOUT_US = 10_000L
 
         // Frame type constants matching the Go stream package
         const val FRAME_TYPE_SPS: Byte = 0x10
@@ -34,50 +49,84 @@ class VideoDecoder(
     }
 
     fun start() {
+        val thread = HandlerThread("VideoDecoderCB").apply { start() }
+        callbackThread = thread
+
         val format = MediaFormat.createVideoFormat(MIME, width, height)
+        // Request low-latency decode if supported (API 30+)
+        try {
+            format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+        } catch (_: Exception) {}
+        // Prefer realtime priority
+        try {
+            format.setInteger(MediaFormat.KEY_PRIORITY, 0) // 0 = realtime
+        } catch (_: Exception) {}
+
         codec = MediaCodec.createDecoderByType(MIME).apply {
+            setCallback(codecCallback, Handler(thread.looper))
             configure(format, surface, null, 0)
             start()
         }
-        Log.d(TAG, "Decoder started: ${width}x${height}")
+        Log.d(TAG, "Decoder started (async): ${width}x${height}")
+    }
+
+    private val codecCallback = object : MediaCodec.Callback() {
+        override fun onInputBufferAvailable(mc: MediaCodec, index: Int) {
+            synchronized(feedLock) {
+                val entry = nalQueue.poll()
+                if (entry != null) {
+                    feedBuffer(mc, index, entry)
+                } else {
+                    bufferQueue.offer(index)
+                }
+            }
+        }
+
+        override fun onOutputBufferAvailable(mc: MediaCodec, index: Int, info: MediaCodec.BufferInfo) {
+            try {
+                mc.releaseOutputBuffer(index, true)
+            } catch (e: Exception) {
+                Log.w(TAG, "releaseOutputBuffer: ${e.message}")
+            }
+        }
+
+        override fun onError(mc: MediaCodec, e: MediaCodec.CodecException) {
+            Log.e(TAG, "Codec error: ${e.message}")
+        }
+
+        override fun onOutputFormatChanged(mc: MediaCodec, format: MediaFormat) {
+            Log.d(TAG, "Output format: $format")
+        }
+    }
+
+    private fun feedBuffer(mc: MediaCodec, index: Int, entry: NALEntry) {
+        try {
+            val buf = mc.getInputBuffer(index) ?: return
+            buf.clear()
+            buf.put(entry.data)
+            val flags = when (entry.frameType) {
+                FRAME_TYPE_SPS, FRAME_TYPE_PPS -> MediaCodec.BUFFER_FLAG_CODEC_CONFIG
+                else -> 0
+            }
+            mc.queueInputBuffer(index, 0, entry.data.size, entry.timestamp, flags)
+        } catch (e: Exception) {
+            Log.w(TAG, "feedBuffer: ${e.message}")
+        }
     }
 
     /**
-     * Submit a NAL unit for decoding. The frameType is used to determine
-     * whether BUFFER_FLAG_CODEC_CONFIG should be set (for SPS/PPS).
+     * Submit a NAL unit for decoding. If an input buffer is already
+     * waiting, the NAL is fed immediately (zero queue delay).
      */
     fun submitNAL(data: ByteArray, frameType: Byte, timestamp: Long) {
-        nalQueue.offer(NALEntry(data, frameType, timestamp))
-    }
-
-    suspend fun decodeLoop() = withContext(Dispatchers.IO) {
-        val codec = codec ?: return@withContext
-        val bufferInfo = MediaCodec.BufferInfo()
-
-        while (isActive) {
-            // Feed input
-            val entry = nalQueue.poll()
-            if (entry != null) {
-                val idx = codec.dequeueInputBuffer(TIMEOUT_US)
-                if (idx >= 0) {
-                    val buf = codec.getInputBuffer(idx)!!
-                    buf.clear()
-                    buf.put(entry.data)
-
-                    // C3+I1: Set BUFFER_FLAG_CODEC_CONFIG for SPS/PPS NAL units
-                    val flags = when (entry.frameType) {
-                        FRAME_TYPE_SPS, FRAME_TYPE_PPS -> MediaCodec.BUFFER_FLAG_CODEC_CONFIG
-                        else -> 0
-                    }
-
-                    codec.queueInputBuffer(idx, 0, entry.data.size, entry.timestamp, flags)
-                }
-            }
-
-            // Drain output
-            val outIdx = codec.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
-            if (outIdx >= 0) {
-                codec.releaseOutputBuffer(outIdx, true)
+        val mc = codec ?: return
+        val entry = NALEntry(data, frameType, timestamp)
+        synchronized(feedLock) {
+            val idx = bufferQueue.poll()
+            if (idx != null) {
+                feedBuffer(mc, idx, entry)
+            } else {
+                nalQueue.offer(entry)
             }
         }
     }
@@ -86,9 +135,12 @@ class VideoDecoder(
         try {
             codec?.stop()
             codec?.release()
-        } catch (_: Exception) {
-        }
+        } catch (_: Exception) {}
         codec = null
+        callbackThread?.quitSafely()
+        callbackThread = null
+        nalQueue.clear()
+        bufferQueue.clear()
         Log.d(TAG, "Decoder stopped")
     }
 }

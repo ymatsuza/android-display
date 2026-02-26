@@ -9,7 +9,8 @@ data class ClientHello(
     val device: String,
     val screen: ScreenInfo,
     val capabilities: List<String>,
-    val codecs: List<String>
+    val codecs: List<String>,
+    val connectionType: String = "wifi"
 ) {
     fun toJson(): String {
         val obj = JSONObject()
@@ -21,6 +22,9 @@ data class ClientHello(
         })
         obj.put("capabilities", JSONArray(capabilities))
         obj.put("codecs", JSONArray(codecs))
+        if (connectionType != "wifi") {
+            obj.put("connectionType", connectionType)
+        }
         return obj.toString()
     }
 }
@@ -33,7 +37,8 @@ data class ServerHello(
     val bitrate: Int,
     val fps: Int,
     val streamPort: Int,
-    val touchPort: Int
+    val touchPort: Int,
+    val videoPort: Int = 0
 ) {
     companion object {
         fun fromJson(json: String): ServerHello {
@@ -45,7 +50,8 @@ data class ServerHello(
                 bitrate = obj.getInt("bitrate"),
                 fps = obj.getInt("fps"),
                 streamPort = obj.getInt("streamPort"),
-                touchPort = obj.optInt("touchPort", 0)
+                touchPort = obj.optInt("touchPort", 0),
+                videoPort = obj.optInt("videoPort", 0)
             )
         }
     }

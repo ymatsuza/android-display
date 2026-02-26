@@ -2,7 +2,6 @@ package com.androidmac.client.touch
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.BufferedOutputStream
 import java.io.OutputStream
 import java.net.Socket
 
@@ -13,11 +12,16 @@ class TouchSender {
     suspend fun connect(host: String, port: Int) = withContext(Dispatchers.IO) {
         socket = Socket(host, port).also {
             it.tcpNoDelay = true
-            output = BufferedOutputStream(it.getOutputStream())
+            // Direct output stream — no BufferedOutputStream since we flush every write.
+            output = it.getOutputStream()
         }
     }
 
-    suspend fun send(event: TouchEvent) = withContext(Dispatchers.IO) {
+    /**
+     * Write a touch event directly to the socket.
+     * Called from a single-threaded Channel consumer, so no concurrency issues.
+     */
+    fun sendDirect(event: TouchEvent) {
         output?.let {
             it.write(event.toBytes())
             it.flush()

@@ -2,10 +2,16 @@ package protocol
 
 // ClientHello is sent by Android to Mac during handshake
 type ClientHello struct {
-	Device       string     `json:"device"`
-	Screen       ScreenInfo `json:"screen"`
-	Capabilities []string   `json:"capabilities"`
-	Codecs       []string   `json:"codecs"`
+	Device         string     `json:"device"`
+	Screen         ScreenInfo `json:"screen"`
+	Capabilities   []string   `json:"capabilities"`
+	Codecs         []string   `json:"codecs"`
+	ConnectionType string     `json:"connectionType,omitempty"` // "wifi" (default) or "usb"
+}
+
+// IsUSB returns true if the client is connected via USB/ADB.
+func (h *ClientHello) IsUSB() bool {
+	return h.ConnectionType == "usb"
 }
 
 type ScreenInfo struct {
@@ -22,6 +28,7 @@ type ServerHello struct {
 	FPS            int         `json:"fps"`
 	StreamPort     int         `json:"streamPort"`
 	TouchPort      int         `json:"touchPort"`
+	VideoPort      int         `json:"videoPort,omitempty"` // TCP video port for USB mode
 }
 
 type DisplayInfo struct {
@@ -30,7 +37,7 @@ type DisplayInfo struct {
 }
 
 // ClientReady is sent by Android to Mac after binding the UDP socket.
-// It reports the actual listening port so the server can stream to it.
+// For USB mode, UDPPort is 0 (video uses TCP instead).
 type ClientReady struct {
 	UDPPort int `json:"udpPort"`
 }

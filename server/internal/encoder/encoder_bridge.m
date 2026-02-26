@@ -14,6 +14,20 @@ typedef struct {
 // Annex-B start code: 00 00 00 01
 static const uint8_t kStartCode[4] = {0x00, 0x00, 0x00, 0x01};
 
+// Pre-allocated buffer for AVCC→Annex-B conversion to avoid per-NAL malloc/free.
+// Only accessed from the VideoToolbox callback thread, so no synchronization needed.
+static uint8_t *sAnnexBuf = NULL;
+static size_t sAnnexBufCap = 0;
+
+static uint8_t *EnsureAnnexBuffer(size_t needed) {
+    if (sAnnexBufCap < needed) {
+        free(sAnnexBuf);
+        sAnnexBufCap = needed * 2; // double to reduce future reallocs
+        sAnnexBuf = (uint8_t *)malloc(sAnnexBufCap);
+    }
+    return sAnnexBuf;
+}
+
 // outputCallback is invoked by VideoToolbox when a frame has been encoded.
 // It converts the encoded data from AVCC format (length-prefixed NAL units)
 // to Annex-B format (start-code-prefixed) as expected by Android MediaCodec.
@@ -63,12 +77,11 @@ static void outputCallback(void *outputCallbackRefCon,
                 if (paramStatus == noErr && paramSet && paramSetSize > 0) {
                     // Build Annex-B formatted parameter set: start code + data
                     size_t totalSize = 4 + paramSetSize;
-                    uint8_t *annexBParam = (uint8_t *)malloc(totalSize);
-                    if (annexBParam) {
-                        memcpy(annexBParam, kStartCode, 4);
-                        memcpy(annexBParam + 4, paramSet, paramSetSize);
-                        ctx->callback(annexBParam, (int)totalSize, 1, timestamp, ctx->userData);
-                        free(annexBParam);
+                    uint8_t *buf = EnsureAnnexBuffer(totalSize);
+                    if (buf) {
+                        memcpy(buf, kStartCode, 4);
+                        memcpy(buf + 4, paramSet, paramSetSize);
+                        ctx->callback(buf, (int)totalSize, 1, timestamp, ctx->userData);
                     }
                 }
             }
@@ -105,14 +118,13 @@ static void outputCallback(void *outputCallbackRefCon,
             break;
         }
 
-        // Build Annex-B formatted NAL unit: start code + data
+        // Build Annex-B formatted NAL unit: start code + data (reuse pre-allocated buffer)
         size_t annexBSize = 4 + nalLength;
-        uint8_t *annexBNal = (uint8_t *)malloc(annexBSize);
-        if (annexBNal) {
-            memcpy(annexBNal, kStartCode, 4);
-            memcpy(annexBNal + 4, dataPointer + offset, nalLength);
-            ctx->callback(annexBNal, (int)annexBSize, isKeyframe ? 1 : 0, timestamp, ctx->userData);
-            free(annexBNal);
+        uint8_t *buf = EnsureAnnexBuffer(annexBSize);
+        if (buf) {
+            memcpy(buf, kStartCode, 4);
+            memcpy(buf + 4, dataPointer + offset, nalLength);
+            ctx->callback(buf, (int)annexBSize, isKeyframe ? 1 : 0, timestamp, ctx->userData);
         }
 
         offset += nalLength;
@@ -153,10 +165,18 @@ EncoderResult CreateEncoder(int width, int height, int fps, int bitrate, Encoded
         return result;
     }
 
-    // Configure session properties for low-latency real-time encoding
+    // Configure session properties for ultra-low-latency real-time encoding
     VTSessionSetProperty(session, kVTCompressionPropertyKey_RealTime, kCFBooleanTrue);
-    VTSessionSetProperty(session, kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_Main_AutoLevel);
+    // Baseline profile: uses CAVLC (faster encode/decode than CABAC in Main profile)
+    VTSessionSetProperty(session, kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_Baseline_AutoLevel);
     VTSessionSetProperty(session, kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse);
+    // Force immediate frame output — no internal buffering
+    int maxDelay = 0;
+    CFNumberRef maxDelayRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &maxDelay);
+    if (maxDelayRef) {
+        VTSessionSetProperty(session, kVTCompressionPropertyKey_MaxFrameDelayCount, maxDelayRef);
+        CFRelease(maxDelayRef);
+    }
 
     // Set average bitrate
     CFNumberRef bitrateRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &bitrate);

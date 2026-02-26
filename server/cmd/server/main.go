@@ -133,9 +133,22 @@ func startPipeline(ctx context.Context, cancel context.CancelFunc, width, height
 	})
 	defer gesture.Close()
 
-	// Wire touch events → gesture recognizer
+	// Wire touch events → pen events bypass gesture recognizer
 	touchServer.OnEvent(func(e touch.Event) {
-		gesture.HandleEvent(e)
+		if e.Type == touch.TouchTypePen {
+			switch e.Action {
+			case touch.TouchActionDown:
+				injector.TabletProximityEnter()
+				injector.TabletDown(e.X, e.Y, e.Pressure, e.TiltX, e.TiltY)
+			case touch.TouchActionMove:
+				injector.TabletDragged(e.X, e.Y, e.Pressure, e.TiltX, e.TiltY)
+			case touch.TouchActionUp:
+				injector.TabletUp(e.X, e.Y, e.Pressure, e.TiltX, e.TiltY)
+				injector.TabletProximityLeave()
+			}
+		} else {
+			gesture.HandleEvent(e)
+		}
 	})
 	defer touchServer.OnEvent(nil)
 	log.Println("touch input enabled")

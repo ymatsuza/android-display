@@ -7,8 +7,10 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.RadioGroup
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -37,6 +39,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ipInputLayout: TextInputLayout
     private lateinit var connectButton: Button
     private lateinit var connectionMode: RadioGroup
+    private lateinit var resolutionSpinner: Spinner
+
+    // Resolution scale factors corresponding to the string-array entries
+    private val scaleFactors = floatArrayOf(1.0f, 0.75f, 0.5f)
 
     private var discovery: NsdDiscovery? = null
     private var discoveryJob: Job? = null
@@ -54,6 +60,15 @@ class MainActivity : AppCompatActivity() {
         ipInputLayout = findViewById(R.id.ipInputLayout)
         connectButton = findViewById(R.id.connectButton)
         connectionMode = findViewById(R.id.connectionMode)
+        resolutionSpinner = findViewById(R.id.resolutionSpinner)
+
+        // 解析度選擇下拉選單
+        ArrayAdapter.createFromResource(
+            this, R.array.resolution_options, android.R.layout.simple_spinner_item
+        ).also { adapter ->
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            resolutionSpinner.adapter = adapter
+        }
 
         connectButton.setOnClickListener { onConnectClicked() }
 
@@ -133,7 +148,14 @@ class MainActivity : AppCompatActivity() {
                 // 在 MainActivity 執行握手以便即時回饋錯誤
                 val controlClient = ControlClient()
                 val metrics = resources.displayMetrics
-                val serverHello = controlClient.connect(host, port, metrics, connectionType)
+
+                // 套用解析度縮放（維持比例，H.264 要求偶數寬高）
+                val scale = scaleFactors[resolutionSpinner.selectedItemPosition]
+                val scaledWidth = ((metrics.widthPixels * scale).toInt() and -2) // round down to even
+                val scaledHeight = ((metrics.heightPixels * scale).toInt() and -2)
+                val serverHello = controlClient.connect(
+                    host, port, scaledWidth, scaledHeight, metrics.densityDpi, connectionType
+                )
 
                 Log.d(TAG, "Handshake complete: $serverHello")
 

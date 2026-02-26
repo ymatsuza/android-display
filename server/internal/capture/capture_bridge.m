@@ -108,7 +108,11 @@ CaptureResult StartCapture(CGDirectDisplayID displayID, int fps, FrameCallback c
             config.height = targetDisplay.height;
             config.minimumFrameInterval = CMTimeMake(1, fps);
             config.pixelFormat = kCVPixelFormatType_32BGRA;
-            config.showsCursor = YES;
+            // No cursor on virtual display (Android tablet sees its own touch indicator)
+            config.showsCursor = NO;
+            // Queue-depth of 3 so ScreenCaptureKit can triple-buffer without
+            // blocking the display link while the encoder consumes the previous frame.
+            config.queueDepth = 3;
 
             // Step 5: Create and configure stream
             SCStream *stream = [[SCStream alloc] initWithFilter:filter
@@ -121,9 +125,16 @@ CaptureResult StartCapture(CGDirectDisplayID displayID, int fps, FrameCallback c
             handler.userData = userData;
 
             NSError *addOutputError = nil;
+            // Dedicated serial queue at user-interactive QoS — avoids contention
+            // with other high-priority GCD work on the global concurrent queue.
+            dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(
+                DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0);
+            dispatch_queue_t captureQueue = dispatch_queue_create(
+                "com.androidmac.capture", attr);
+
             BOOL added = [stream addStreamOutput:handler
                                             type:SCStreamOutputTypeScreen
-                                  sampleHandlerQueue:dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0)
+                                  sampleHandlerQueue:captureQueue
                                            error:&addOutputError];
             if (!added || addOutputError) {
                 errorMessage = addOutputError ? [addOutputError localizedDescription] : @"failed to add stream output";

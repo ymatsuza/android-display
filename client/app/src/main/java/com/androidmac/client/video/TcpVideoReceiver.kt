@@ -32,7 +32,7 @@ class TcpVideoReceiver(private val host: String, private val port: Int) {
     suspend fun connect() = withContext(Dispatchers.IO) {
         val sock = Socket(host, port)
         sock.tcpNoDelay = true
-        sock.receiveBufferSize = 2 * 1024 * 1024
+        sock.receiveBufferSize = 4 * 1024 * 1024 // match server write buffer
         socket = sock
         input = DataInputStream(BufferedInputStream(sock.getInputStream(), 256 * 1024))
         Log.d(TAG, "Connected to $host:$port")
@@ -44,6 +44,10 @@ class TcpVideoReceiver(private val host: String, private val port: Int) {
     suspend fun receiveLoop(onPacket: (VideoPacket) -> Unit) = withContext(Dispatchers.IO) {
         val inp = input ?: throw IllegalStateException("Not connected. Call connect() first.")
 
+        // Reusable read buffer — grown on demand, avoids per-packet allocation.
+        // Most NAL units are < 64KB; keyframes may be larger.
+        var readBuf = ByteArray(64 * 1024)
+
         while (isActive) {
             try {
                 // 讀取 4-byte length prefix
@@ -53,12 +57,16 @@ class TcpVideoReceiver(private val host: String, private val port: Int) {
                     continue
                 }
 
-                // 讀取完整封包（header + payload）
-                val data = ByteArray(totalLen)
-                inp.readFully(data)
+                // Grow buffer if needed (keeps the larger size for subsequent frames)
+                if (readBuf.size < totalLen) {
+                    readBuf = ByteArray(totalLen)
+                }
+
+                // 讀取完整封包（header + payload）into reusable buffer
+                inp.readFully(readBuf, 0, totalLen)
 
                 // 解析封包
-                val packet = PacketParser.parse(data, 0, totalLen)
+                val packet = PacketParser.parse(readBuf, 0, totalLen)
                 onPacket(packet)
             } catch (e: Exception) {
                 if (isActive) {

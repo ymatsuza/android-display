@@ -1,6 +1,5 @@
 package com.androidmac.client.control
 
-import android.util.DisplayMetrics
 import com.androidmac.client.protocol.ClientHello
 import com.androidmac.client.protocol.ClientReady
 import com.androidmac.client.protocol.ScreenInfo
@@ -19,12 +18,17 @@ class ControlClient {
 
     /**
      * Connect to the server and perform the handshake.
+     * @param width  Requested display width (may be scaled from native resolution)
+     * @param height Requested display height (must maintain aspect ratio)
+     * @param dpi    Display DPI
      * @param connectionType "wifi" or "usb"
      */
     suspend fun connect(
         host: String,
         port: Int,
-        metrics: DisplayMetrics,
+        width: Int,
+        height: Int,
+        dpi: Int,
         connectionType: String = "wifi"
     ): ServerHello = withContext(Dispatchers.IO) {
         val sock = Socket(host, port)
@@ -38,11 +42,7 @@ class ControlClient {
 
         val hello = ClientHello(
             device = android.os.Build.MODEL,
-            screen = ScreenInfo(
-                metrics.widthPixels,
-                metrics.heightPixels,
-                metrics.densityDpi
-            ),
+            screen = ScreenInfo(width, height, dpi),
             capabilities = listOf("touch", "pen", "pressure"),
             codecs = listOf("h264"),
             connectionType = connectionType

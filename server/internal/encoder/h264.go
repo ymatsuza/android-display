@@ -19,6 +19,15 @@ import (
 	"unsafe"
 )
 
+// nalBufPool recycles byte slices used to copy NAL data from C to Go,
+// avoiding a heap allocation per NAL unit (~60+ per second at 60fps).
+var nalBufPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 0, 64*1024) // 64KB initial capacity
+		return &buf
+	},
+}
+
 // NALUnit represents a single H.264 NAL unit in Annex-B format
 // (prefixed with 00 00 00 01 start code).
 type NALUnit struct {
@@ -62,7 +71,14 @@ func goEncodedCallback(nalData *C.uint8_t, nalSize C.int, isKeyframe C.int, time
 	}
 
 	size := int(nalSize)
-	goData := make([]byte, size)
+	// Reuse a pooled buffer to avoid per-NAL heap allocation
+	bufp := nalBufPool.Get().(*[]byte)
+	goData := *bufp
+	if cap(goData) < size {
+		goData = make([]byte, size)
+	} else {
+		goData = goData[:size]
+	}
 	C.memcpy(unsafe.Pointer(&goData[0]), unsafe.Pointer(nalData), C.size_t(size))
 
 	// Parse NAL unit type from the first byte after the Annex-B start code
@@ -78,6 +94,12 @@ func goEncodedCallback(nalData *C.uint8_t, nalSize C.int, isKeyframe C.int, time
 		Timestamp:  int64(timestamp),
 		NALType:    nalType,
 	})
+
+	// Return buffer to pool after handler has consumed the data.
+	// The handler (SendFrame) copies data into its own TCP buffer,
+	// so it's safe to recycle this slice now.
+	*bufp = goData
+	nalBufPool.Put(bufp)
 }
 
 // Encoder wraps a VideoToolbox H.264 hardware compression session.

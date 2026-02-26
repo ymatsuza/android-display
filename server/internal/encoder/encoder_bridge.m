@@ -9,6 +9,11 @@
 typedef struct {
     EncodedCallback callback;
     void *userData;
+    // Cached SPS/PPS — only re-sent when bytes change
+    uint8_t *cachedSPS;
+    size_t   cachedSPSLen;
+    uint8_t *cachedPPS;
+    size_t   cachedPPSLen;
 } EncoderContext;
 
 // Annex-B start code: 00 00 00 01
@@ -61,7 +66,9 @@ static void outputCallback(void *outputCallbackRefCon,
         isKeyframe = (notSync == NULL || !CFBooleanGetValue(notSync));
     }
 
-    // For keyframes, extract and send SPS and PPS parameter sets
+    // For keyframes, extract SPS/PPS — only send if they changed since last keyframe.
+    // H.264 parameter sets rarely change mid-stream, so skipping redundant sends
+    // saves ~1KB per keyframe and reduces encoder callback overhead.
     if (isKeyframe) {
         CMFormatDescriptionRef formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer);
         if (formatDesc) {
@@ -74,8 +81,24 @@ static void outputCallback(void *outputCallbackRefCon,
                 OSStatus paramStatus = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
                     formatDesc, i, &paramSet, &paramSetSize, NULL, NULL);
 
-                if (paramStatus == noErr && paramSet && paramSetSize > 0) {
-                    // Build Annex-B formatted parameter set: start code + data
+                if (paramStatus != noErr || !paramSet || paramSetSize == 0) continue;
+
+                // Check against cached version
+                uint8_t **cached = (i == 0) ? &ctx->cachedSPS : &ctx->cachedPPS;
+                size_t   *cachedLen = (i == 0) ? &ctx->cachedSPSLen : &ctx->cachedPPSLen;
+
+                BOOL changed = (*cachedLen != paramSetSize) ||
+                               (*cached == NULL) ||
+                               (memcmp(*cached, paramSet, paramSetSize) != 0);
+                if (changed) {
+                    // Update cache
+                    free(*cached);
+                    *cached = (uint8_t *)malloc(paramSetSize);
+                    if (*cached) {
+                        memcpy(*cached, paramSet, paramSetSize);
+                        *cachedLen = paramSetSize;
+                    }
+                    // Send Annex-B formatted parameter set
                     size_t totalSize = 4 + paramSetSize;
                     uint8_t *buf = EnsureAnnexBuffer(totalSize);
                     if (buf) {
@@ -185,13 +208,33 @@ EncoderResult CreateEncoder(int width, int height, int fps, int bitrate, Encoded
         CFRelease(bitrateRef);
     }
 
-    // Set max keyframe interval (GOP size)
-    int keyframeInterval = fps; // keyframe every 1 second
+    // Set max keyframe interval — every 0.5s for faster error recovery.
+    // If a keyframe is lost/corrupted, the decoder recovers in 500ms instead of 1000ms.
+    int keyframeInterval = fps / 2;
+    if (keyframeInterval < 1) keyframeInterval = 1;
     CFNumberRef keyframeRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &keyframeInterval);
     if (keyframeRef) {
         VTSessionSetProperty(session, kVTCompressionPropertyKey_MaxKeyFrameInterval, keyframeRef);
         CFRelease(keyframeRef);
     }
+
+    // Set data rate limits — cap peak bitrate to 1.5x average over 1-second window.
+    // This prevents bursty keyframes from saturating the TCP pipe.
+    int peakBitrate = bitrate * 3 / 2;
+    int limitWindow = 1; // seconds
+    int limits[2] = { peakBitrate / 8, limitWindow }; // bytes per second, window
+    CFNumberRef limitsArr[2];
+    limitsArr[0] = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &limits[0]);
+    limitsArr[1] = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &limits[1]);
+    if (limitsArr[0] && limitsArr[1]) {
+        CFArrayRef limitsArray = CFArrayCreate(kCFAllocatorDefault, (const void **)limitsArr, 2, &kCFTypeArrayCallBacks);
+        if (limitsArray) {
+            VTSessionSetProperty(session, kVTCompressionPropertyKey_DataRateLimits, limitsArray);
+            CFRelease(limitsArray);
+        }
+    }
+    if (limitsArr[0]) CFRelease(limitsArr[0]);
+    if (limitsArr[1]) CFRelease(limitsArr[1]);
 
     // Set expected frame rate
     CFNumberRef fpsRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &fps);
@@ -245,6 +288,9 @@ void DestroyEncoder(void *session, void *context) {
         CFRelease((VTCompressionSessionRef)session);
     }
     if (context) {
-        free(context);
+        EncoderContext *ctx = (EncoderContext *)context;
+        free(ctx->cachedSPS);
+        free(ctx->cachedPPS);
+        free(ctx);
     }
 }

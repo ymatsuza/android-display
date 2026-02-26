@@ -46,6 +46,11 @@ class VideoDecoder(
         // Frame type constants matching the Go stream package
         const val FRAME_TYPE_SPS: Byte = 0x10
         const val FRAME_TYPE_PPS: Byte = 0x11
+        const val FRAME_TYPE_IDR: Byte = 0x01
+
+        // Max NAL queue depth before dropping P-frames.
+        // At 60fps each queued NAL ≈ 16ms, so 5 items ≈ 80ms max decode lag.
+        private const val MAX_QUEUE_DEPTH = 5
     }
 
     fun start() {
@@ -117,9 +122,22 @@ class VideoDecoder(
     /**
      * Submit a NAL unit for decoding. If an input buffer is already
      * waiting, the NAL is fed immediately (zero queue delay).
+     *
+     * When the NAL queue exceeds MAX_QUEUE_DEPTH, P-frames are dropped
+     * to prevent unbounded latency buildup. SPS/PPS/IDR frames are
+     * never dropped since they're required for decoder recovery.
      */
     fun submitNAL(data: ByteArray, frameType: Byte, timestamp: Long) {
         val mc = codec ?: return
+
+        // Drop P-frames if decoder is falling behind to cap latency
+        if (nalQueue.size > MAX_QUEUE_DEPTH &&
+            frameType != FRAME_TYPE_SPS &&
+            frameType != FRAME_TYPE_PPS &&
+            frameType != FRAME_TYPE_IDR) {
+            return
+        }
+
         val entry = NALEntry(data, frameType, timestamp)
         synchronized(feedLock) {
             val idx = bufferQueue.poll()

@@ -68,7 +68,7 @@ func (s *TCPVideoServer) AcceptOne() error {
 	// Set TCP_NODELAY for low latency
 	if tc, ok := conn.(*net.TCPConn); ok {
 		tc.SetNoDelay(true)
-		tc.SetWriteBuffer(2 * 1024 * 1024)
+		tc.SetWriteBuffer(4 * 1024 * 1024) // 4MB for 8Mbps@60fps headroom
 	}
 	s.mu.Lock()
 	s.conn = conn
@@ -133,7 +133,7 @@ func (s *TCPVideoServer) SendFrame(nalUnit []byte, frameType byte) error {
 	copy(buf[4+PacketHeaderSize:], nalUnit)
 
 	// Set write deadline to avoid blocking on slow clients
-	conn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
+	conn.SetWriteDeadline(time.Now().Add(150 * time.Millisecond))
 	_, err := conn.Write(buf)
 
 	// Return buffer to pool — must update the pointer in case we grew it

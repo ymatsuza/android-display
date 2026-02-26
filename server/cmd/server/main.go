@@ -15,7 +15,9 @@ import (
 	"github.com/luke/android-mac/server/internal/discovery"
 	"github.com/luke/android-mac/server/internal/display"
 	"github.com/luke/android-mac/server/internal/encoder"
+	"github.com/luke/android-mac/server/internal/input"
 	"github.com/luke/android-mac/server/internal/stream"
+	"github.com/luke/android-mac/server/internal/touch"
 )
 
 const (
@@ -27,7 +29,16 @@ const (
 func main() {
 	log.Println("android-mac server starting...")
 
-	// 1. Start mDNS advertisement
+	// 1. Start touch TCP server (auto-assign port)
+	touchServer, err := touch.NewServer(0)
+	if err != nil {
+		log.Fatalf("touch server failed: %v", err)
+	}
+	defer touchServer.Stop()
+	go touchServer.AcceptLoop()
+	log.Printf("touch server on port %d", touchServer.Port())
+
+	// 2. Start mDNS advertisement
 	hostname, _ := os.Hostname()
 	mdns, err := discovery.NewService(hostname, controlPort)
 	if err != nil {
@@ -36,30 +47,28 @@ func main() {
 	defer mdns.Stop()
 	log.Printf("mDNS advertising on port %d", controlPort)
 
-	// 2. Start TCP control server
+	// 3. Start TCP control server
 	ctrlServer, err := control.NewServer(controlPort)
 	if err != nil {
 		log.Fatalf("control server failed: %v", err)
 	}
 	defer ctrlServer.Stop()
+	ctrlServer.SetTouchPort(touchServer.Port())
 
-	// 3. On client connect → start the capture-encode-stream pipeline
+	// 4. On client connect → start the capture-encode-stream pipeline
 	ctrlServer.OnClient(func(client control.ClientConn) {
 		w := client.Hello.Screen.Width
 		h := client.Hello.Screen.Height
 		remoteAddr := client.Conn.RemoteAddr().String()
 		host, _, _ := net.SplitHostPort(remoteAddr)
-		// C1: Use the client-reported UDP port instead of a hardcoded one.
 		targetAddr := fmt.Sprintf("%s:%d", host, client.UDPPort)
 
-		// C2: Create a cancellable context for the pipeline.
 		ctx, cancel := context.WithCancel(context.Background())
 
-		// Monitor the TCP control connection — when it closes, cancel the pipeline.
+		// Monitor the TCP control connection
 		go func() {
 			buf := make([]byte, 1)
 			for {
-				// TODO (I2): Implement heartbeat echo here instead of bare read.
 				_, err := client.Conn.Read(buf)
 				if err != nil {
 					if err != io.EOF {
@@ -72,24 +81,20 @@ func main() {
 			}
 		}()
 
-		go startPipeline(ctx, cancel, w, h, targetAddr)
+		go startPipeline(ctx, cancel, w, h, targetAddr, touchServer)
 	})
 
 	go ctrlServer.AcceptLoop()
 	log.Printf("control server on port %d — waiting for connections...", controlPort)
 
-	// 4. Wait for SIGINT/SIGTERM to shut down
+	// 5. Wait for SIGINT/SIGTERM
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 	log.Println("shutting down...")
 }
 
-// startPipeline creates a virtual display, captures it, encodes frames
-// to H.264, and streams the NAL units over UDP to the client.
-// It blocks until ctx is cancelled (e.g. client disconnect), then all
-// deferred cleanup runs.
-func startPipeline(ctx context.Context, cancel context.CancelFunc, width, height int, targetAddr string) {
+func startPipeline(ctx context.Context, cancel context.CancelFunc, width, height int, targetAddr string, touchServer *touch.Server) {
 	defer cancel()
 	log.Printf("starting pipeline: %dx%d → %s", width, height, targetAddr)
 
@@ -106,6 +111,33 @@ func startPipeline(ctx context.Context, cancel context.CancelFunc, width, height
 	defer vd.Close()
 	log.Printf("virtual display created: 0x%x (%dx%d)", vd.DisplayID(), width, height)
 
+	// Input injector + gesture recognizer for this display
+	injector := input.NewInjector(vd.DisplayID())
+	gesture := input.NewGestureRecognizer(func(me input.MouseEvent) {
+		switch me.Action {
+		case input.ActionMouseMove:
+			injector.MouseMove(me.X, me.Y)
+		case input.ActionLeftDown:
+			injector.LeftMouseDown(me.X, me.Y)
+		case input.ActionLeftUp:
+			injector.LeftMouseUp(me.X, me.Y)
+		case input.ActionLeftDragged:
+			injector.LeftMouseDragged(me.X, me.Y)
+		case input.ActionRightDown:
+			injector.RightMouseDown(me.X, me.Y)
+		case input.ActionRightUp:
+			injector.RightMouseUp(me.X, me.Y)
+		case input.ActionScroll:
+			injector.ScrollWheel(me.ScrollX, me.ScrollY)
+		}
+	})
+
+	// Wire touch events → gesture recognizer
+	touchServer.OnEvent(func(e touch.Event) {
+		gesture.HandleEvent(e)
+	})
+	log.Println("touch input enabled")
+
 	// UDP streamer
 	streamer, err := stream.NewUDPStreamer(targetAddr)
 	if err != nil {
@@ -114,7 +146,7 @@ func startPipeline(ctx context.Context, cancel context.CancelFunc, width, height
 	}
 	defer streamer.Close()
 
-	// C3+I1: H.264 encoder — map NAL types for proper SPS/PPS/IDR/P classification
+	// H.264 encoder
 	enc, err := encoder.New(encoder.Config{
 		Width:   width,
 		Height:  height,
@@ -142,7 +174,7 @@ func startPipeline(ctx context.Context, cancel context.CancelFunc, width, height
 	}
 	defer enc.Close()
 
-	// Screen capture — feeds raw frames into the encoder
+	// Screen capture
 	cap, err := capture.Start(vd.DisplayID(), defaultFPS, func(frame capture.Frame) {
 		defer capture.ReleasePixelBuffer(frame.PixelBuffer)
 		if err := enc.Encode(frame.PixelBuffer, frame.Timestamp); err != nil {
@@ -155,9 +187,7 @@ func startPipeline(ctx context.Context, cancel context.CancelFunc, width, height
 	}
 	defer cap.Stop()
 
-	log.Println("pipeline active")
-	// C2: Block until context is cancelled (client disconnect or signal),
-	// then all deferred cleanup runs.
+	log.Println("pipeline active (video + touch)")
 	<-ctx.Done()
 	log.Println("pipeline stopping...")
 }

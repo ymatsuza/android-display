@@ -16,6 +16,8 @@ func TestHandshake(t *testing.T) {
 	}
 	defer srv.Stop()
 
+	srv.SetTouchPort(9001)
+
 	clientReady := make(chan ClientConn, 1)
 	srv.OnClient(func(c ClientConn) {
 		clientReady <- c
@@ -57,6 +59,9 @@ func TestHandshake(t *testing.T) {
 	}
 	if response.StreamPort == 0 {
 		t.Error("stream port should not be 0")
+	}
+	if response.TouchPort != 9001 {
+		t.Errorf("expected touch port 9001, got %d", response.TouchPort)
 	}
 
 	// Step 3: Send ClientReady with the actual UDP port

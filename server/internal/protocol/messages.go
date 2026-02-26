@@ -21,6 +21,7 @@ type ServerHello struct {
 	Bitrate        int         `json:"bitrate"`
 	FPS            int         `json:"fps"`
 	StreamPort     int         `json:"streamPort"`
+	TouchPort      int         `json:"touchPort"`
 }
 
 type DisplayInfo struct {

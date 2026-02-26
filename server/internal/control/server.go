@@ -22,6 +22,7 @@ type Server struct {
 	clients    []ClientConn
 	mu         sync.Mutex
 	streamPort int
+	touchPort  int
 	onClient   func(ClientConn)
 	done       chan struct{}
 }
@@ -48,6 +49,10 @@ func (s *Server) Port() int {
 
 func (s *Server) SetStreamPort(port int) {
 	s.streamPort = port
+}
+
+func (s *Server) SetTouchPort(port int) {
+	s.touchPort = port
 }
 
 func (s *Server) OnClient(fn func(ClientConn)) {
@@ -104,6 +109,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		Bitrate:    8_000_000,
 		FPS:        60,
 		StreamPort: s.streamPort,
+		TouchPort:  s.touchPort,
 	}
 
 	enc := json.NewEncoder(conn)

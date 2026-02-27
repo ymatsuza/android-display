@@ -2,218 +2,138 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
-#import <objc/runtime.h>
+#import <IOSurface/IOSurface.h>
 #include "capture_bridge.h"
 #include <string.h>
+#include <mach/mach_time.h>
+#include <unistd.h>
 
-#if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
-#import <ScreenCaptureKit/ScreenCaptureKit.h>
-#define HAS_SCREENCAPTUREKIT 1
-#else
-#define HAS_SCREENCAPTUREKIT 0
-#endif
-
-#if HAS_SCREENCAPTUREKIT
-
-// FrameHandler acts as the SCStreamOutput delegate, receiving captured frames
-// from ScreenCaptureKit and forwarding them to the Go callback.
-API_AVAILABLE(macos(12.3))
-@interface FrameHandler : NSObject <SCStreamOutput>
-@property (nonatomic, assign) FrameCallback callback;
-@property (nonatomic, assign) void *userData;
-@end
-
-API_AVAILABLE(macos(12.3))
-@implementation FrameHandler
-
-- (void)stream:(SCStream *)stream
-    didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
-                   ofType:(SCStreamOutputType)type {
-    if (type != SCStreamOutputTypeScreen) {
-        return;
-    }
-
-    // Extract the pixel buffer from the sample buffer
-    CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
-    if (!pixelBuffer) {
-        return;
-    }
-
-    int width = (int)CVPixelBufferGetWidth(pixelBuffer);
-    int height = (int)CVPixelBufferGetHeight(pixelBuffer);
-
-    // Get the presentation timestamp in microseconds
-    CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
-    int64_t timestamp = 0;
-    if (CMTIME_IS_VALID(pts)) {
-        timestamp = (int64_t)(CMTimeGetSeconds(pts) * 1000000.0);
-    }
-
-    // Retain the pixel buffer so Go side can use it asynchronously.
-    // The Go side is responsible for calling ReleasePixelBuffer.
-    CVPixelBufferRetain(pixelBuffer);
-
-    if (self.callback) {
-        self.callback((void *)pixelBuffer, width, height, timestamp, self.userData);
-    }
-}
-
-@end
-
-#endif // HAS_SCREENCAPTUREKIT
+// CaptureContext bundles the callback, user-data, and the display stream
+// reference so the block-based handler can forward frames to Go.
+typedef struct {
+    FrameCallback callback;
+    void *userData;
+    CGDisplayStreamRef stream;
+} CaptureContext;
 
 CaptureResult StartCapture(CGDirectDisplayID displayID, int fps, FrameCallback callback, void *userData) {
     CaptureResult result;
     memset(&result, 0, sizeof(result));
 
-#if HAS_SCREENCAPTUREKIT
-    if (@available(macOS 12.3, *)) {
-        __block SCStream *captureStream = nil;
-        __block NSString *errorMessage = nil;
-        __block BOOL completed = NO;
+    // Query actual display size from CoreGraphics (works for virtual displays).
+    CGRect bounds = CGDisplayBounds(displayID);
+    size_t width  = (size_t)bounds.size.width;
+    size_t height = (size_t)bounds.size.height;
 
-        dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-
-        // Step 1: Get shareable content to find the target display
-        [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent * _Nullable content, NSError * _Nullable error) {
-            if (error || !content) {
-                errorMessage = error ? [error localizedDescription] : @"failed to get shareable content";
-                dispatch_semaphore_signal(semaphore);
-                return;
-            }
-
-            // Step 2: Find the matching display
-            SCDisplay *targetDisplay = nil;
-            for (SCDisplay *display in content.displays) {
-                if (display.displayID == displayID) {
-                    targetDisplay = display;
-                    break;
-                }
-            }
-
-            if (!targetDisplay) {
-                errorMessage = [NSString stringWithFormat:@"display %u not found", displayID];
-                dispatch_semaphore_signal(semaphore);
-                return;
-            }
-
-            // Step 3: Create content filter for the display (capture entire display)
-            SCContentFilter *filter = [[SCContentFilter alloc]
-                initWithDisplay:targetDisplay
-                excludingWindows:@[]];
-
-            // Step 4: Configure the stream
-            SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
-            config.width = targetDisplay.width;
-            config.height = targetDisplay.height;
-            config.minimumFrameInterval = CMTimeMake(1, fps);
-            config.pixelFormat = kCVPixelFormatType_32BGRA;
-            // No cursor on virtual display (Android tablet sees its own touch indicator)
-            config.showsCursor = NO;
-            // Queue-depth of 3 so ScreenCaptureKit can triple-buffer without
-            // blocking the display link while the encoder consumes the previous frame.
-            config.queueDepth = 3;
-
-            // Step 5: Create and configure stream
-            SCStream *stream = [[SCStream alloc] initWithFilter:filter
-                                                  configuration:config
-                                                       delegate:nil];
-
-            // Step 6: Create frame handler
-            FrameHandler *handler = [[FrameHandler alloc] init];
-            handler.callback = callback;
-            handler.userData = userData;
-
-            NSError *addOutputError = nil;
-            // Dedicated serial queue at user-interactive QoS — avoids contention
-            // with other high-priority GCD work on the global concurrent queue.
-            dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(
-                DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0);
-            dispatch_queue_t captureQueue = dispatch_queue_create(
-                "com.androidmac.capture", attr);
-
-            BOOL added = [stream addStreamOutput:handler
-                                            type:SCStreamOutputTypeScreen
-                                  sampleHandlerQueue:captureQueue
-                                           error:&addOutputError];
-            if (!added || addOutputError) {
-                errorMessage = addOutputError ? [addOutputError localizedDescription] : @"failed to add stream output";
-                dispatch_semaphore_signal(semaphore);
-                return;
-            }
-
-            // Step 7: Start capture
-            [stream startCaptureWithCompletionHandler:^(NSError * _Nullable startError) {
-                if (startError) {
-                    errorMessage = [startError localizedDescription];
-                } else {
-                    captureStream = stream;
-                    completed = YES;
-
-                    // Prevent stream and handler from being released while active
-                    // by associating the handler with the stream using objc_setAssociatedObject.
-                    objc_setAssociatedObject(stream, "frameHandler", handler, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                }
-                dispatch_semaphore_signal(semaphore);
-            }];
-        }];
-
-        // Wait for async operations with a 5 second timeout
-        long timeout = dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
-        if (timeout != 0) {
-            snprintf(result.errorMsg, sizeof(result.errorMsg), "capture start timed out");
-            return result;
-        }
-
-        if (errorMessage) {
-            snprintf(result.errorMsg, sizeof(result.errorMsg), "%s",
-                     [errorMessage UTF8String]);
-            return result;
-        }
-
-        if (!completed || !captureStream) {
-            snprintf(result.errorMsg, sizeof(result.errorMsg), "capture start failed");
-            return result;
-        }
-
-        // Transfer ownership to C side
-        result.stream = (__bridge_retained void *)captureStream;
-        result.success = 1;
-    } else {
-        snprintf(result.errorMsg, sizeof(result.errorMsg), "macOS 12.3+ required for ScreenCaptureKit");
+    if (width == 0 || height == 0) {
+        snprintf(result.errorMsg, sizeof(result.errorMsg),
+                 "display %u has zero size (%.0fx%.0f)", displayID,
+                 bounds.size.width, bounds.size.height);
+        return result;
     }
-#else
-    snprintf(result.errorMsg, sizeof(result.errorMsg), "ScreenCaptureKit not available (macOS 12.3+ required)");
-#endif
 
+    // Configure the stream: minimum frame interval, show cursor, BGRA pixel format.
+    double interval = 1.0 / (double)fps;
+    NSDictionary *properties = @{
+        (__bridge NSString *)kCGDisplayStreamMinimumFrameTime : @(interval),
+        (__bridge NSString *)kCGDisplayStreamShowCursor       : @YES,
+        (__bridge NSString *)kCGDisplayStreamQueueDepth       : @3,
+    };
+
+    // Allocate context on the heap so the block can reference it.
+    CaptureContext *ctx = (CaptureContext *)calloc(1, sizeof(CaptureContext));
+    if (!ctx) {
+        snprintf(result.errorMsg, sizeof(result.errorMsg), "failed to allocate context");
+        return result;
+    }
+    ctx->callback = callback;
+    ctx->userData = userData;
+
+    // Dedicated serial queue at user-interactive QoS.
+    dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(
+        DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0);
+    dispatch_queue_t captureQueue = dispatch_queue_create(
+        "com.androidmac.capture", attr);
+
+    // Create the display stream using CGDisplayStream.
+    // Unlike ScreenCaptureKit, this takes a CGDirectDisplayID directly —
+    // no "shareable content" discovery step, so virtual displays are always found.
+    CGDisplayStreamRef stream = CGDisplayStreamCreateWithDispatchQueue(
+        displayID,
+        width,
+        height,
+        kCVPixelFormatType_32BGRA,
+        (__bridge CFDictionaryRef)properties,
+        captureQueue,
+        ^(CGDisplayStreamFrameStatus status,
+          uint64_t displayTime,
+          IOSurfaceRef frameSurface,
+          CGDisplayStreamUpdateRef updateRef)
+    {
+        if (status != kCGDisplayStreamFrameStatusFrameComplete || !frameSurface) {
+            return;
+        }
+
+        // Wrap IOSurface in a CVPixelBuffer for the encoder.
+        CVPixelBufferRef pixelBuffer = NULL;
+        CVReturn cvErr = CVPixelBufferCreateWithIOSurface(
+            kCFAllocatorDefault, frameSurface, NULL, &pixelBuffer);
+        if (cvErr != kCVReturnSuccess || !pixelBuffer) {
+            return;
+        }
+
+        int w = (int)CVPixelBufferGetWidth(pixelBuffer);
+        int h = (int)CVPixelBufferGetHeight(pixelBuffer);
+
+        // Timestamp: convert Mach absolute time → microseconds.
+        // displayTime is in Mach absolute units; convert via timebase.
+        mach_timebase_info_data_t tb;
+        mach_timebase_info(&tb);
+        int64_t timestamp = (int64_t)((double)displayTime * tb.numer / tb.denom / 1000.0);
+
+        if (ctx->callback) {
+            ctx->callback((void *)pixelBuffer, w, h, timestamp, ctx->userData);
+        } else {
+            CVPixelBufferRelease(pixelBuffer);
+        }
+    });
+
+    if (!stream) {
+        free(ctx);
+        snprintf(result.errorMsg, sizeof(result.errorMsg),
+                 "CGDisplayStreamCreate failed for display %u (%zux%zu)",
+                 displayID, width, height);
+        return result;
+    }
+
+    // Start the stream.
+    CGError startErr = CGDisplayStreamStart(stream);
+    if (startErr != kCGErrorSuccess) {
+        CFRelease(stream);
+        free(ctx);
+        snprintf(result.errorMsg, sizeof(result.errorMsg),
+                 "CGDisplayStreamStart failed: %d", (int)startErr);
+        return result;
+    }
+
+    ctx->stream = stream;
+    result.stream  = (void *)ctx;   // ownership passes to caller
+    result.success = 1;
     return result;
 }
 
-void StopCapture(void *stream) {
-    if (stream == NULL) {
-        return;
+void StopCapture(void *streamPtr) {
+    if (!streamPtr) return;
+
+    CaptureContext *ctx = (CaptureContext *)streamPtr;
+    if (ctx->stream) {
+        CGDisplayStreamStop(ctx->stream);
+        // Give the stop a moment to flush pending callbacks.
+        usleep(100000); // 100 ms
+        CFRelease(ctx->stream);
+        ctx->stream = NULL;
     }
-
-#if HAS_SCREENCAPTUREKIT
-    if (@available(macOS 12.3, *)) {
-        @autoreleasepool {
-            SCStream *captureStream = (__bridge_transfer SCStream *)stream;
-
-            dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-
-            [captureStream stopCaptureWithCompletionHandler:^(NSError * _Nullable error) {
-                // Ignore errors during stop -- we're shutting down
-                dispatch_semaphore_signal(semaphore);
-            }];
-
-            // Wait up to 3 seconds for stop to complete
-            dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC));
-
-            // Remove the associated frame handler so it gets released
-            objc_setAssociatedObject(captureStream, "frameHandler", nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-    }
-#endif
+    free(ctx);
 }
 
 void ReleasePixelBuffer(void *pixelBuffer) {

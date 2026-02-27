@@ -9,11 +9,6 @@
 typedef struct {
     EncodedCallback callback;
     void *userData;
-    // Cached SPS/PPS — only re-sent when bytes change
-    uint8_t *cachedSPS;
-    size_t   cachedSPSLen;
-    uint8_t *cachedPPS;
-    size_t   cachedPPSLen;
 } EncoderContext;
 
 // Annex-B start code: 00 00 00 01
@@ -66,9 +61,9 @@ static void outputCallback(void *outputCallbackRefCon,
         isKeyframe = (notSync == NULL || !CFBooleanGetValue(notSync));
     }
 
-    // For keyframes, extract SPS/PPS — only send if they changed since last keyframe.
-    // H.264 parameter sets rarely change mid-stream, so skipping redundant sends
-    // saves ~1KB per keyframe and reduces encoder callback overhead.
+    // For keyframes, always send SPS/PPS before the IDR slice.
+    // The client decoder may restart at any time (e.g. screen lock/unlock),
+    // so every keyframe must be self-contained for decoder recovery.
     if (isKeyframe) {
         CMFormatDescriptionRef formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer);
         if (formatDesc) {
@@ -83,29 +78,13 @@ static void outputCallback(void *outputCallbackRefCon,
 
                 if (paramStatus != noErr || !paramSet || paramSetSize == 0) continue;
 
-                // Check against cached version
-                uint8_t **cached = (i == 0) ? &ctx->cachedSPS : &ctx->cachedPPS;
-                size_t   *cachedLen = (i == 0) ? &ctx->cachedSPSLen : &ctx->cachedPPSLen;
-
-                BOOL changed = (*cachedLen != paramSetSize) ||
-                               (*cached == NULL) ||
-                               (memcmp(*cached, paramSet, paramSetSize) != 0);
-                if (changed) {
-                    // Update cache
-                    free(*cached);
-                    *cached = (uint8_t *)malloc(paramSetSize);
-                    if (*cached) {
-                        memcpy(*cached, paramSet, paramSetSize);
-                        *cachedLen = paramSetSize;
-                    }
-                    // Send Annex-B formatted parameter set
-                    size_t totalSize = 4 + paramSetSize;
-                    uint8_t *buf = EnsureAnnexBuffer(totalSize);
-                    if (buf) {
-                        memcpy(buf, kStartCode, 4);
-                        memcpy(buf + 4, paramSet, paramSetSize);
-                        ctx->callback(buf, (int)totalSize, 1, timestamp, ctx->userData);
-                    }
+                // Send Annex-B formatted parameter set
+                size_t totalSize = 4 + paramSetSize;
+                uint8_t *buf = EnsureAnnexBuffer(totalSize);
+                if (buf) {
+                    memcpy(buf, kStartCode, 4);
+                    memcpy(buf + 4, paramSet, paramSetSize);
+                    ctx->callback(buf, (int)totalSize, 1, timestamp, ctx->userData);
                 }
             }
         }
@@ -288,9 +267,6 @@ void DestroyEncoder(void *session, void *context) {
         CFRelease((VTCompressionSessionRef)session);
     }
     if (context) {
-        EncoderContext *ctx = (EncoderContext *)context;
-        free(ctx->cachedSPS);
-        free(ctx->cachedPPS);
-        free(ctx);
+        free(context);
     }
 }

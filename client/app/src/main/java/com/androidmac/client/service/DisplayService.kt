@@ -93,6 +93,14 @@ class DisplayService : Service() {
     @Volatile
     var disconnectCallback: DisconnectCallback? = null
 
+    // 快取最近一組 SPS/PPS，供解碼器重啟時注入（例如鎖屏解鎖後）
+    @Volatile
+    var cachedSPS: ByteArray? = null
+        private set
+    @Volatile
+    var cachedPPS: ByteArray? = null
+        private set
+
     // 連線參數
     private var serverHost: String = ""
     private var touchPort: Int = 0
@@ -333,12 +341,18 @@ class DisplayService : Service() {
     }
 
     /**
-     * 處理收到的 UDP 封包，進行分片重組
+     * 處理收到的 UDP 封包，進行分片重組。
+     * SPS/PPS 會被快取，供解碼器重啟時立即注入。
      */
     private fun handlePacket(packet: VideoPacket) {
         packetCount++
 
         if (packet.fragTotal <= 1) {
+            // 快取 SPS/PPS 供解碼器重啟恢復
+            when (packet.frameType) {
+                0x10.toByte() -> cachedSPS = packet.payload.copyOf()
+                0x11.toByte() -> cachedPPS = packet.payload.copyOf()
+            }
             // 單分片 NAL，直接提交
             submitCount++
             videoCallback?.onNAL(packet.payload, packet.frameType, packet.timestamp)

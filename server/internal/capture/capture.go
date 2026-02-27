@@ -1,8 +1,8 @@
 package capture
 
 /*
-#cgo CFLAGS: -x objective-c -fobjc-arc -I../../bridge
-#cgo LDFLAGS: -framework ScreenCaptureKit -framework CoreGraphics -framework CoreMedia -framework CoreVideo -framework Foundation
+#cgo CFLAGS: -x objective-c -fobjc-arc -mmacosx-version-min=14.0 -Wno-deprecated-declarations -I../../bridge
+#cgo LDFLAGS: -framework CoreGraphics -framework CoreMedia -framework CoreVideo -framework IOSurface -framework Foundation
 #include "../../bridge/capture_bridge.h"
 
 extern void goFrameCallback(void *pixelBuffer, int width, int height, int64_t timestamp, void *userData);
@@ -66,7 +66,7 @@ func goFrameCallback(pixelBuffer unsafe.Pointer, width C.int, height C.int, time
 	}
 }
 
-// Capturer manages an active ScreenCaptureKit capture session.
+// Capturer manages an active CGDisplayStream capture session.
 type Capturer struct {
 	stream    unsafe.Pointer
 	handlerID uintptr
@@ -76,18 +76,17 @@ type Capturer struct {
 // Each captured frame is delivered to handler asynchronously.
 // The caller must call Stop when capture is no longer needed.
 //
-// For virtual displays, ScreenCaptureKit may need a moment to discover the
-// new display. Start retries up to 3 times with 500ms delay between attempts.
+// Uses CGDisplayStream which takes a CGDirectDisplayID directly, avoiding
+// ScreenCaptureKit's display discovery limitations with virtual displays.
+// Retries up to 10 times (500ms apart) for the display to become ready.
 func Start(displayID uint32, fps int, handler FrameHandler) (*Capturer, error) {
-	id := registerHandler(handler)
+	const maxRetries = 10
+	const retryDelay = 500 * time.Millisecond
 
-	const maxRetries = 3
-	var lastErr string
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		if attempt > 0 {
-			log.Printf("capture: display %d not found, retrying (%d/%d)...", displayID, attempt+1, maxRetries)
-			time.Sleep(500 * time.Millisecond)
-		}
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		id := registerHandler(handler)
 
 		result := C.StartCapture(
 			C.CGDirectDisplayID(displayID),
@@ -102,11 +101,17 @@ func Start(displayID uint32, fps int, handler FrameHandler) (*Capturer, error) {
 				handlerID: id,
 			}, nil
 		}
-		lastErr = C.GoString(&result.errorMsg[0])
+
+		unregisterHandler(id)
+		lastErr = fmt.Errorf("%s", C.GoString(&result.errorMsg[0]))
+
+		if attempt < maxRetries {
+			log.Printf("capture: attempt %d failed (%v), retrying...", attempt, lastErr)
+			time.Sleep(retryDelay)
+		}
 	}
 
-	unregisterHandler(id)
-	return nil, fmt.Errorf("start capture: %s", lastErr)
+	return nil, fmt.Errorf("start capture: %v (after %d attempts)", lastErr, maxRetries)
 }
 
 // Stop terminates the capture session and releases all associated resources.

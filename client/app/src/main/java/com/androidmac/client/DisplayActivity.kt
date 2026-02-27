@@ -125,6 +125,17 @@ class DisplayActivity : AppCompatActivity() {
         decoder.start()
         videoDecoder = decoder
         Log.d(TAG, "Decoder started (async callback)")
+
+        // 注入快取的 SPS/PPS，讓解碼器在下一個 IDR 到來時立即恢復畫面
+        // （例如鎖屏解鎖後 Surface 重建的場景）
+        displayService?.cachedSPS?.let { sps ->
+            decoder.submitNAL(sps, VideoDecoder.FRAME_TYPE_SPS, 0)
+            Log.d(TAG, "Injected cached SPS (${sps.size} bytes)")
+        }
+        displayService?.cachedPPS?.let { pps ->
+            decoder.submitNAL(pps, VideoDecoder.FRAME_TYPE_PPS, 0)
+            Log.d(TAG, "Injected cached PPS (${pps.size} bytes)")
+        }
     }
 
     private fun stopDecoder() {

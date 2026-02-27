@@ -217,7 +217,25 @@ VirtualDisplayResult CreateVirtualDisplay(VirtualDisplayConfig config) {
             return result;
         }
 
-        // Step 9: Return success
+        // Step 9: Position the virtual display to the right of the main display.
+        // Without explicit positioning, macOS may place the virtual display at (0,0),
+        // overlapping the main display. ScreenCaptureKit will not list overlapping
+        // displays as separate capture targets, causing "display not found" errors.
+        {
+            CGDirectDisplayID mainDisplay = CGMainDisplayID();
+            CGRect mainBounds = CGDisplayBounds(mainDisplay);
+            int32_t newX = (int32_t)(mainBounds.origin.x + mainBounds.size.width);
+            int32_t newY = 0;
+
+            CGDisplayConfigRef configRef = NULL;
+            CGError err = CGBeginDisplayConfiguration(&configRef);
+            if (err == kCGErrorSuccess && configRef) {
+                CGConfigureDisplayOrigin(configRef, displayID, newX, newY);
+                CGCompleteDisplayConfiguration(configRef, kCGConfigureForSession);
+            }
+        }
+
+        // Step 10: Return success
         // Use __bridge_retained to transfer ownership to C side.
         // The caller is responsible for calling DestroyVirtualDisplay to release.
         result.display = (__bridge_retained void *)display;

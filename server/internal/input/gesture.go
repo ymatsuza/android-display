@@ -45,7 +45,7 @@ const (
 const (
 	longPressDelay = 500 * time.Millisecond
 	doubleTapDelay = 300 * time.Millisecond
-	dragThreshold  = float32(0.015) // 1.5% of screen
+	dragThreshold  = float32(0.005) // 0.5% of screen (~10px) — smaller dead zone for snappier drag
 	scrollScale    = int32(800)     // multiply normalized delta to pixel delta
 )
 
@@ -163,6 +163,9 @@ func (gr *GestureRecognizer) handleMove(e touch.Event) {
 			gr.state = stateDragging
 			gr.handler(MouseEvent{Action: ActionLeftDown, X: p.DownX, Y: p.DownY})
 			gr.handler(MouseEvent{Action: ActionLeftDragged, X: e.X, Y: e.Y})
+		} else {
+			// 閾值內也先送 MouseMove，讓游標即時跟手
+			gr.handler(MouseEvent{Action: ActionMouseMove, X: e.X, Y: e.Y})
 		}
 
 	case stateDragging:

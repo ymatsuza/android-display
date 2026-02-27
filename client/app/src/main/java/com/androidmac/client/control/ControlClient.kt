@@ -22,6 +22,7 @@ class ControlClient {
      * @param height Requested display height (must maintain aspect ratio)
      * @param dpi    Display DPI
      * @param connectionType "wifi" or "usb"
+     * @param bitrate Requested bitrate in bps (0 = server default)
      */
     suspend fun connect(
         host: String,
@@ -29,7 +30,8 @@ class ControlClient {
         width: Int,
         height: Int,
         dpi: Int,
-        connectionType: String = "wifi"
+        connectionType: String = "wifi",
+        bitrate: Int = 0
     ): ServerHello = withContext(Dispatchers.IO) {
         val sock = Socket(host, port)
         sock.tcpNoDelay = true
@@ -45,7 +47,8 @@ class ControlClient {
             screen = ScreenInfo(width, height, dpi),
             capabilities = listOf("touch", "pen", "pressure"),
             codecs = listOf("h264"),
-            connectionType = connectionType
+            connectionType = connectionType,
+            bitrate = bitrate
         )
         w.println(hello.toJson())
 

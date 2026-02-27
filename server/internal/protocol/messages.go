@@ -7,6 +7,7 @@ type ClientHello struct {
 	Capabilities   []string   `json:"capabilities"`
 	Codecs         []string   `json:"codecs"`
 	ConnectionType string     `json:"connectionType,omitempty"` // "wifi" (default) or "usb"
+	Bitrate        int        `json:"bitrate,omitempty"`        // requested bitrate in bps, 0 = server default
 }
 
 // IsUSB returns true if the client is connected via USB/ADB.

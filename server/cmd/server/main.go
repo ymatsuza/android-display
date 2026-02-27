@@ -98,6 +98,11 @@ func main() {
 	ctrlServer.OnClient(func(client control.ClientConn) {
 		w := client.Hello.Screen.Width
 		h := client.Hello.Screen.Height
+		bitrate := client.Hello.Bitrate
+		if bitrate <= 0 {
+			bitrate = defaultBitrate
+		}
+		log.Printf("client requested bitrate: %d bps", bitrate)
 
 		ctx, cancel := context.WithCancel(context.Background())
 
@@ -119,12 +124,12 @@ func main() {
 
 		// Determine video transport based on connection type
 		if client.Hello.IsUSB() {
-			go startPipelineUSB(ctx, cancel, w, h, touchServer)
+			go startPipelineUSB(ctx, cancel, w, h, bitrate, touchServer)
 		} else {
 			remoteAddr := client.Conn.RemoteAddr().String()
 			host, _, _ := net.SplitHostPort(remoteAddr)
 			targetAddr := fmt.Sprintf("%s:%d", host, client.UDPPort)
-			go startPipelineWiFi(ctx, cancel, w, h, targetAddr, touchServer)
+			go startPipelineWiFi(ctx, cancel, w, h, bitrate, targetAddr, touchServer)
 		}
 	})
 
@@ -144,9 +149,9 @@ func main() {
 }
 
 // startPipelineWiFi starts the capture-encode-stream pipeline using UDP transport.
-func startPipelineWiFi(ctx context.Context, cancel context.CancelFunc, width, height int, targetAddr string, touchServer *touch.Server) {
+func startPipelineWiFi(ctx context.Context, cancel context.CancelFunc, width, height, bitrate int, targetAddr string, touchServer *touch.Server) {
 	defer cancel()
-	log.Printf("starting WiFi pipeline: %dx%d → %s", width, height, targetAddr)
+	log.Printf("starting WiFi pipeline: %dx%d @ %d bps → %s", width, height, bitrate, targetAddr)
 
 	// UDP streamer
 	udpStreamer, err := stream.NewUDPStreamer(targetAddr)
@@ -156,13 +161,13 @@ func startPipelineWiFi(ctx context.Context, cancel context.CancelFunc, width, he
 	}
 	defer udpStreamer.Close()
 
-	startPipelineCommon(ctx, cancel, width, height, udpStreamer, touchServer)
+	startPipelineCommon(ctx, cancel, width, height, bitrate, udpStreamer, touchServer)
 }
 
 // startPipelineUSB starts the capture-encode-stream pipeline using TCP transport.
-func startPipelineUSB(ctx context.Context, cancel context.CancelFunc, width, height int, touchServer *touch.Server) {
+func startPipelineUSB(ctx context.Context, cancel context.CancelFunc, width, height, bitrate int, touchServer *touch.Server) {
 	defer cancel()
-	log.Printf("starting USB pipeline: %dx%d (TCP video)", width, height)
+	log.Printf("starting USB pipeline: %dx%d @ %d bps (TCP video)", width, height, bitrate)
 
 	// Wait for client to connect to TCP video port
 	if err := tcpVideoServer.AcceptOne(); err != nil {
@@ -170,11 +175,11 @@ func startPipelineUSB(ctx context.Context, cancel context.CancelFunc, width, hei
 		return
 	}
 
-	startPipelineCommon(ctx, cancel, width, height, tcpVideoServer, touchServer)
+	startPipelineCommon(ctx, cancel, width, height, bitrate, tcpVideoServer, touchServer)
 }
 
 // startPipelineCommon contains the shared pipeline logic for both WiFi and USB modes.
-func startPipelineCommon(ctx context.Context, cancel context.CancelFunc, width, height int, videoStreamer stream.Streamer, touchServer *touch.Server) {
+func startPipelineCommon(ctx context.Context, cancel context.CancelFunc, width, height, bitrate int, videoStreamer stream.Streamer, touchServer *touch.Server) {
 	// Virtual display
 	vd, err := display.New(display.Config{
 		Width:  width,
@@ -235,7 +240,7 @@ func startPipelineCommon(ctx context.Context, cancel context.CancelFunc, width, 
 		Width:   width,
 		Height:  height,
 		FPS:     defaultFPS,
-		Bitrate: defaultBitrate,
+		Bitrate: bitrate,
 	}, func(nal encoder.NALUnit) {
 		var ft byte
 		switch {

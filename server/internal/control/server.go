@@ -109,13 +109,17 @@ func (s *Server) handleConn(conn net.Conn) {
 	}
 
 	// Step 2: Send ServerHello
+	bitrate := hello.Bitrate
+	if bitrate <= 0 {
+		bitrate = 8_000_000 // default
+	}
 	response := protocol.ServerHello{
 		VirtualDisplay: protocol.DisplayInfo{
 			Width:  hello.Screen.Width,
 			Height: hello.Screen.Height,
 		},
 		Codec:      codec,
-		Bitrate:    8_000_000,
+		Bitrate:    bitrate,
 		FPS:        60,
 		StreamPort: s.streamPort,
 		TouchPort:  s.touchPort,

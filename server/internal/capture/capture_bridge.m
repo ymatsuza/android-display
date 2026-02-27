@@ -37,7 +37,7 @@ CaptureResult StartCapture(CGDirectDisplayID displayID, int fps, FrameCallback c
     NSDictionary *properties = @{
         (__bridge NSString *)kCGDisplayStreamMinimumFrameTime : @(interval),
         (__bridge NSString *)kCGDisplayStreamShowCursor       : @YES,
-        (__bridge NSString *)kCGDisplayStreamQueueDepth       : @3,
+        (__bridge NSString *)kCGDisplayStreamQueueDepth       : @1,
     };
 
     // Allocate context on the heap so the block can reference it.

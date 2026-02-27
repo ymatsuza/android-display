@@ -88,21 +88,32 @@ func (gr *GestureRecognizer) Close() {
 }
 
 // HandleEvent processes a touch event from the Android client.
+// The mutex is released before calling the handler so CGEvent injection
+// does not block the next touch event from being processed.
 func (gr *GestureRecognizer) HandleEvent(event touch.Event) {
 	gr.mu.Lock()
-	defer gr.mu.Unlock()
+	var events [5]MouseEvent
+	n := 0
 
 	switch event.Action {
 	case touch.TouchActionDown:
-		gr.handleDown(event)
+		n = gr.handleDown(event, events[:])
 	case touch.TouchActionMove:
-		gr.handleMove(event)
+		n = gr.handleMove(event, events[:])
 	case touch.TouchActionUp:
-		gr.handleUp(event)
+		n = gr.handleUp(event, events[:])
+	}
+
+	gr.mu.Unlock()
+
+	// Emit events outside the lock — CGEvent injection can be slow
+	for i := 0; i < n; i++ {
+		gr.handler(events[i])
 	}
 }
 
-func (gr *GestureRecognizer) handleDown(e touch.Event) {
+// handleDown returns events to emit (written into out). Returns count.
+func (gr *GestureRecognizer) handleDown(e touch.Event, out []MouseEvent) int {
 	gr.pointers[e.PointerID] = &pointerState{
 		X: e.X, Y: e.Y,
 		DownX: e.X, DownY: e.Y,
@@ -139,12 +150,15 @@ func (gr *GestureRecognizer) handleDown(e touch.Event) {
 		}
 		gr.state = stateTwoDown
 	}
+
+	return 0
 }
 
-func (gr *GestureRecognizer) handleMove(e touch.Event) {
+// handleMove returns events to emit. Returns count.
+func (gr *GestureRecognizer) handleMove(e touch.Event, out []MouseEvent) int {
 	p, ok := gr.pointers[e.PointerID]
 	if !ok {
-		return
+		return 0
 	}
 
 	oldX, oldY := p.X, p.Y
@@ -161,15 +175,17 @@ func (gr *GestureRecognizer) handleMove(e touch.Event) {
 				gr.longPressTimer.Stop()
 			}
 			gr.state = stateDragging
-			gr.handler(MouseEvent{Action: ActionLeftDown, X: p.DownX, Y: p.DownY})
-			gr.handler(MouseEvent{Action: ActionLeftDragged, X: e.X, Y: e.Y})
-		} else {
-			// 閾值內也先送 MouseMove，讓游標即時跟手
-			gr.handler(MouseEvent{Action: ActionMouseMove, X: e.X, Y: e.Y})
+			out[0] = MouseEvent{Action: ActionLeftDown, X: p.DownX, Y: p.DownY}
+			out[1] = MouseEvent{Action: ActionLeftDragged, X: e.X, Y: e.Y}
+			return 2
 		}
+		// 閾值內也先送 MouseMove，讓游標即時跟手
+		out[0] = MouseEvent{Action: ActionMouseMove, X: e.X, Y: e.Y}
+		return 1
 
 	case stateDragging:
-		gr.handler(MouseEvent{Action: ActionLeftDragged, X: e.X, Y: e.Y})
+		out[0] = MouseEvent{Action: ActionLeftDragged, X: e.X, Y: e.Y}
+		return 1
 
 	case stateTwoDown:
 		gr.state = stateScrolling
@@ -179,13 +195,18 @@ func (gr *GestureRecognizer) handleMove(e touch.Event) {
 		deltaX := int32(float32(scrollScale) * (e.X - oldX))
 		deltaY := int32(float32(scrollScale) * (e.Y - oldY))
 		if deltaX != 0 || deltaY != 0 {
-			gr.handler(MouseEvent{Action: ActionScroll, ScrollX: deltaX, ScrollY: deltaY})
+			out[0] = MouseEvent{Action: ActionScroll, ScrollX: deltaX, ScrollY: deltaY}
+			return 1
 		}
 	}
+
+	return 0
 }
 
-func (gr *GestureRecognizer) handleUp(e touch.Event) {
+// handleUp returns events to emit. Returns count.
+func (gr *GestureRecognizer) handleUp(e touch.Event, out []MouseEvent) int {
 	delete(gr.pointers, e.PointerID)
+	n := 0
 
 	switch gr.state {
 	case stateOneDown:
@@ -196,11 +217,12 @@ func (gr *GestureRecognizer) handleUp(e touch.Event) {
 		if gr.tapPending {
 			// Second tap -> double click
 			gr.tapPending = false
-			gr.handler(MouseEvent{Action: ActionMouseMove, X: e.X, Y: e.Y})
-			gr.handler(MouseEvent{Action: ActionLeftDown, X: e.X, Y: e.Y})
-			gr.handler(MouseEvent{Action: ActionLeftUp, X: e.X, Y: e.Y})
-			gr.handler(MouseEvent{Action: ActionLeftDown, X: e.X, Y: e.Y})
-			gr.handler(MouseEvent{Action: ActionLeftUp, X: e.X, Y: e.Y})
+			out[0] = MouseEvent{Action: ActionMouseMove, X: e.X, Y: e.Y}
+			out[1] = MouseEvent{Action: ActionLeftDown, X: e.X, Y: e.Y}
+			out[2] = MouseEvent{Action: ActionLeftUp, X: e.X, Y: e.Y}
+			out[3] = MouseEvent{Action: ActionLeftDown, X: e.X, Y: e.Y}
+			out[4] = MouseEvent{Action: ActionLeftUp, X: e.X, Y: e.Y}
+			n = 5
 		} else {
 			// First tap -- wait for possible second tap
 			gr.tapPending = true
@@ -219,7 +241,8 @@ func (gr *GestureRecognizer) handleUp(e touch.Event) {
 		}
 
 	case stateDragging:
-		gr.handler(MouseEvent{Action: ActionLeftUp, X: e.X, Y: e.Y})
+		out[0] = MouseEvent{Action: ActionLeftUp, X: e.X, Y: e.Y}
+		n = 1
 
 	case stateLongPress:
 		// Already handled
@@ -231,4 +254,6 @@ func (gr *GestureRecognizer) handleUp(e touch.Event) {
 	if len(gr.pointers) == 0 {
 		gr.state = stateIdle
 	}
+
+	return n
 }

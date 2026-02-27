@@ -17,13 +17,7 @@ bool CheckAccessibilityPermission(void) {
 }
 
 // Helper: warp cursor then post a mouse event with absolute positioning.
-// Step 1 – CGWarpMouseCursorPosition teleports the cursor to the exact
-//          target without generating any event (bypasses HID acceleration).
-// Step 2 – CGAssociateMouseAndMouseCursorPosition(true) immediately
-//          re-associates mouse hardware so the cursor doesn't freeze.
-// Step 3 – Post the CGEvent at the same position with zeroed deltas.
-//          Since the cursor is already at the target, no drift can occur.
-// This is the standard approach used by VNC servers (OSXvnc, macVNC).
+// Used for Down / Up events where the application needs a full event.
 static void PostAbsoluteMouseEvent(CGEventType type, CGPoint point, CGMouseButton button) {
     CGWarpMouseCursorPosition(point);
     CGAssociateMouseAndMouseCursorPosition(true);
@@ -36,8 +30,11 @@ static void PostAbsoluteMouseEvent(CGEventType type, CGPoint point, CGMouseButto
     }
 }
 
+// Lightweight cursor warp — just teleport the cursor, no CGEvent overhead.
+// Used for high-frequency MouseMove where we only need visual cursor tracking.
 void InjectMouseMove(double x, double y) {
-    PostAbsoluteMouseEvent(kCGEventMouseMoved, CGPointMake(x, y), kCGMouseButtonLeft);
+    CGWarpMouseCursorPosition(CGPointMake(x, y));
+    CGAssociateMouseAndMouseCursorPosition(true);
 }
 
 void InjectLeftMouseDown(double x, double y) {
@@ -48,8 +45,19 @@ void InjectLeftMouseUp(double x, double y) {
     PostAbsoluteMouseEvent(kCGEventLeftMouseUp, CGPointMake(x, y), kCGMouseButtonLeft);
 }
 
+// Optimised drag: warp + CGEvent but skip CGAssociateMouseAndMouseCursorPosition.
+// During continuous dragging we are in full control of cursor position, so the
+// re-association call (one extra syscall per event) is unnecessary overhead.
 void InjectLeftMouseDragged(double x, double y) {
-    PostAbsoluteMouseEvent(kCGEventLeftMouseDragged, CGPointMake(x, y), kCGMouseButtonLeft);
+    CGPoint point = CGPointMake(x, y);
+    CGWarpMouseCursorPosition(point);
+    CGEventRef event = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseDragged, point, kCGMouseButtonLeft);
+    if (event) {
+        CGEventSetIntegerValueField(event, kCGMouseEventDeltaX, 0);
+        CGEventSetIntegerValueField(event, kCGMouseEventDeltaY, 0);
+        CGEventPost(kCGHIDEventTap, event);
+        CFRelease(event);
+    }
 }
 
 void InjectRightMouseDown(double x, double y) {
@@ -108,11 +116,15 @@ void InjectTabletProximityLeave(void) {
     }
 }
 
+// Tablet events: warp + CGEvent with tablet subtype.
+// For Dragged events, skip CGAssociate (same optimisation as mouse drag).
 static void InjectTabletEvent(CGEventType eventType, double x, double y, double pressure, double tiltX, double tiltY) {
     CGPoint point = CGPointMake(x, y);
-    // Warp cursor first to bypass HID acceleration (same pattern as mouse events)
     CGWarpMouseCursorPosition(point);
-    CGAssociateMouseAndMouseCursorPosition(true);
+    // Only re-associate for Down/Up (not continuous Dragged/Moved)
+    if (eventType == kCGEventLeftMouseDown || eventType == kCGEventLeftMouseUp) {
+        CGAssociateMouseAndMouseCursorPosition(true);
+    }
     CGEventRef event = CGEventCreateMouseEvent(NULL, eventType, point, kCGMouseButtonLeft);
     if (event) {
         CGEventSetIntegerValueField(event, kCGMouseEventDeltaX, 0);

@@ -30,11 +30,10 @@ static void PostAbsoluteMouseEvent(CGEventType type, CGPoint point, CGMouseButto
     }
 }
 
-// Lightweight cursor warp — just teleport the cursor, no CGEvent overhead.
-// Used for high-frequency MouseMove where we only need visual cursor tracking.
+// MouseMove needs a full CGEvent so that CGDisplayStream detects the cursor
+// change and captures a new frame.  Pure CGWarp alone can cause missed frames.
 void InjectMouseMove(double x, double y) {
-    CGWarpMouseCursorPosition(CGPointMake(x, y));
-    CGAssociateMouseAndMouseCursorPosition(true);
+    PostAbsoluteMouseEvent(kCGEventMouseMoved, CGPointMake(x, y), kCGMouseButtonLeft);
 }
 
 void InjectLeftMouseDown(double x, double y) {

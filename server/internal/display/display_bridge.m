@@ -4,6 +4,7 @@
 #import <objc/message.h>
 #include "display_bridge.h"
 #include <string.h>
+#include <unistd.h>
 
 // CGVirtualDisplay is a private API in CoreDisplay.framework.
 // We load it dynamically and use NSClassFromString to access the classes.
@@ -217,14 +218,25 @@ VirtualDisplayResult CreateVirtualDisplay(VirtualDisplayConfig config) {
             return result;
         }
 
-        // Step 9: Position the virtual display to the right of the main display.
-        // Without explicit positioning, macOS may place the virtual display at (0,0),
-        // overlapping the main display. ScreenCaptureKit will not list overlapping
-        // displays as separate capture targets, causing "display not found" errors.
+        // Step 9: Position the virtual display to the right of ALL physical displays.
+        // We find the rightmost edge across every active display so the virtual
+        // display never overlaps a physical monitor.  Overlap would cause
+        // CGDisplayBounds to return stale/wrong coordinates for the injector.
         {
-            CGDirectDisplayID mainDisplay = CGMainDisplayID();
-            CGRect mainBounds = CGDisplayBounds(mainDisplay);
-            int32_t newX = (int32_t)(mainBounds.origin.x + mainBounds.size.width);
+            CGDirectDisplayID allDisplays[16];
+            uint32_t displayCount = 0;
+            CGGetActiveDisplayList(16, allDisplays, &displayCount);
+
+            double rightEdge = 0;
+            for (uint32_t i = 0; i < displayCount; i++) {
+                // Skip our own virtual display
+                if (allDisplays[i] == displayID) continue;
+                CGRect b = CGDisplayBounds(allDisplays[i]);
+                double edge = b.origin.x + b.size.width;
+                if (edge > rightEdge) rightEdge = edge;
+            }
+
+            int32_t newX = (int32_t)rightEdge;
             int32_t newY = 0;
 
             CGDisplayConfigRef configRef = NULL;
@@ -234,6 +246,11 @@ VirtualDisplayResult CreateVirtualDisplay(VirtualDisplayConfig config) {
                 CGCompleteDisplayConfiguration(configRef, kCGConfigureForSession);
             }
         }
+
+        // Step 9b: Wait briefly for macOS to finalize display layout, then
+        // verify the position took effect so downstream code (injector) gets
+        // the correct bounds from CGDisplayBounds.
+        usleep(100000); // 100 ms
 
         // Step 10: Return success
         // Use __bridge_retained to transfer ownership to C side.

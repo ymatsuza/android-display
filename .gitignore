@@ -1,5 +1,6 @@
 # Go
 server/android-mac-server
+server/server
 *.exe
 *.test
 *.out
@@ -12,6 +13,16 @@ client/local.properties
 *.apk
 *.aab
 
+# Android SDK (install separately)
+build-tools/
+platforms/
+platform-tools/
+licenses/
+.knownPackages
+
+# Drawing app (separate project)
+drawing/
+
 # IDE
 .idea/
 *.iml
@@ -19,3 +30,4 @@ client/local.properties
 
 # OS
 .DS_Store
+Thumbs.db

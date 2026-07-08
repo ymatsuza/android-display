@@ -200,11 +200,11 @@ func TestMoveWithinThresholdDoesNotDrag(t *testing.T) {
 	})
 	gr.HandleEvent(touch.Event{
 		Type: touch.TouchTypeFinger, Action: touch.TouchActionMove,
-		X: 0.505, Y: 0.505, PointerID: 0, Timestamp: 110,
+		X: 0.502, Y: 0.502, PointerID: 0, Timestamp: 110,
 	})
 	gr.HandleEvent(touch.Event{
 		Type: touch.TouchTypeFinger, Action: touch.TouchActionUp,
-		X: 0.505, Y: 0.505, PointerID: 0, Timestamp: 120,
+		X: 0.502, Y: 0.502, PointerID: 0, Timestamp: 120,
 	})
 
 	time.Sleep(400 * time.Millisecond)

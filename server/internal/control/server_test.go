@@ -16,7 +16,9 @@ func TestHandshake(t *testing.T) {
 	}
 	defer srv.Stop()
 
-	srv.SetTouchPort(9001)
+	srv.SetPortAllocator(func(conn net.Conn, hello protocol.ClientHello) (int, int, error) {
+		return 9001, 0, nil
+	})
 
 	clientReady := make(chan ClientConn, 1)
 	srv.OnClient(func(c ClientConn) {

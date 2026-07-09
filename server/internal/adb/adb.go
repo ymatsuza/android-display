@@ -53,52 +53,63 @@ func (m *Manager) Path() string {
 
 // HasDevice returns true if at least one ADB device is connected.
 func (m *Manager) HasDevice() bool {
-	out, err := exec.Command(m.adbPath, "devices").Output()
+	serials, err := m.ListDeviceSerials()
 	if err != nil {
 		return false
 	}
+	return len(serials) > 0
+}
+
+// ListDeviceSerials returns the serials of all currently attached ADB devices
+// in "device" state (excludes "unauthorized"/"offline"/etc).
+func (m *Manager) ListDeviceSerials() ([]string, error) {
+	out, err := exec.Command(m.adbPath, "devices").Output()
+	if err != nil {
+		return nil, err
+	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var serials []string
 	// First line is "List of devices attached", actual devices follow
 	for _, line := range lines[1:] {
-		line = strings.TrimSpace(line)
-		if line != "" && strings.Contains(line, "\tdevice") {
-			return true
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == "device" {
+			serials = append(serials, fields[0])
 		}
 	}
-	return false
+	return serials, nil
 }
 
-// SetupReverse creates a reverse port forwarding: Android localhost:port → Mac localhost:port.
+// SetupReverse creates a reverse port forwarding on the given device: Android localhost:port → Mac localhost:port.
 // This allows the Android app to connect to localhost:port and reach the Mac server.
-func (m *Manager) SetupReverse(port int) error {
+func (m *Manager) SetupReverse(serial string, port int) error {
 	portStr := fmt.Sprintf("tcp:%d", port)
-	cmd := exec.Command(m.adbPath, "reverse", portStr, portStr)
+	cmd := exec.Command(m.adbPath, "-s", serial, "reverse", portStr, portStr)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("adb reverse %s failed: %v (%s)", portStr, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("adb -s %s reverse %s failed: %v (%s)", serial, portStr, err, strings.TrimSpace(string(out)))
 	}
-	log.Printf("adb reverse %s → %s", portStr, portStr)
+	log.Printf("adb -s %s reverse %s → %s", serial, portStr, portStr)
 	return nil
 }
 
-// RemoveReverse removes a single reverse forwarding rule.
-func (m *Manager) RemoveReverse(port int) error {
+// RemoveReverse removes a single reverse forwarding rule on the given device.
+func (m *Manager) RemoveReverse(serial string, port int) error {
 	portStr := fmt.Sprintf("tcp:%d", port)
-	cmd := exec.Command(m.adbPath, "reverse", "--remove", portStr)
+	cmd := exec.Command(m.adbPath, "-s", serial, "reverse", "--remove", portStr)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("adb reverse --remove %s failed: %v (%s)", portStr, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("adb -s %s reverse --remove %s failed: %v (%s)", serial, portStr, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
-// RemoveAllReverse removes all reverse forwarding rules.
-func (m *Manager) RemoveAllReverse() error {
-	cmd := exec.Command(m.adbPath, "reverse", "--remove-all")
+// RemoveAllReverse removes all reverse forwarding rules on the given device.
+func (m *Manager) RemoveAllReverse(serial string) error {
+	cmd := exec.Command(m.adbPath, "-s", serial, "reverse", "--remove-all")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("adb reverse --remove-all failed: %v (%s)", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("adb -s %s reverse --remove-all failed: %v (%s)", serial, err, strings.TrimSpace(string(out)))
 	}
-	log.Println("adb reverse --remove-all")
+	log.Printf("adb -s %s reverse --remove-all", serial)
 	return nil
 }

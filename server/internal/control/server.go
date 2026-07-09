@@ -12,20 +12,25 @@ import (
 )
 
 type ClientConn struct {
-	Conn    net.Conn
-	Hello   protocol.ClientHello
-	UDPPort int // actual UDP port reported by the client via ClientReady (0 for USB)
+	Conn      net.Conn
+	Hello     protocol.ClientHello
+	UDPPort   int // actual UDP port reported by the client via ClientReady (0 for USB)
+	TouchPort int // TCP touch port allocated for this client
+	VideoPort int // TCP video port allocated for this client (0 for WiFi/UDP mode)
 }
 
+// PortAllocator allocates a per-client touch (and, for USB clients, video) port
+// before the ServerHello is sent. Called once per incoming connection.
+type PortAllocator func(conn net.Conn, hello protocol.ClientHello) (touchPort, videoPort int, err error)
+
 type Server struct {
-	listener   net.Listener
-	clients    []ClientConn
-	mu         sync.Mutex
-	streamPort int
-	touchPort  int
-	videoPort  int // TCP video port for USB mode
-	onClient   func(ClientConn)
-	done       chan struct{}
+	listener      net.Listener
+	clients       []ClientConn
+	mu            sync.Mutex
+	streamPort    int
+	allocatePorts PortAllocator
+	onClient      func(ClientConn)
+	done          chan struct{}
 }
 
 func NewServer(port int) (*Server, error) {
@@ -52,12 +57,10 @@ func (s *Server) SetStreamPort(port int) {
 	s.streamPort = port
 }
 
-func (s *Server) SetTouchPort(port int) {
-	s.touchPort = port
-}
-
-func (s *Server) SetVideoPort(port int) {
-	s.videoPort = port
+// SetPortAllocator registers the callback used to allocate a per-client
+// touch/video port pair during the handshake, before ServerHello is sent.
+func (s *Server) SetPortAllocator(fn PortAllocator) {
+	s.allocatePorts = fn
 }
 
 func (s *Server) OnClient(fn func(ClientConn)) {
@@ -108,7 +111,18 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 	}
 
-	// Step 2: Send ServerHello
+	// Step 2: Allocate this client's touch/video ports, then send ServerHello.
+	var touchPort, videoPort int
+	if s.allocatePorts != nil {
+		var err error
+		touchPort, videoPort, err = s.allocatePorts(conn, hello)
+		if err != nil {
+			log.Printf("port allocation error: %v", err)
+			conn.Close()
+			return
+		}
+	}
+
 	bitrate := hello.Bitrate
 	if bitrate <= 0 {
 		bitrate = 8_000_000 // default
@@ -122,8 +136,8 @@ func (s *Server) handleConn(conn net.Conn) {
 		Bitrate:    bitrate,
 		FPS:        60,
 		StreamPort: s.streamPort,
-		TouchPort:  s.touchPort,
-		VideoPort:  s.videoPort,
+		TouchPort:  touchPort,
+		VideoPort:  videoPort,
 	}
 
 	enc := json.NewEncoder(conn)
@@ -149,7 +163,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	// Clear the read deadline after successful handshake.
 	conn.SetReadDeadline(time.Time{})
 
-	client := ClientConn{Conn: conn, Hello: hello, UDPPort: ready.UDPPort}
+	client := ClientConn{Conn: conn, Hello: hello, UDPPort: ready.UDPPort, TouchPort: touchPort, VideoPort: videoPort}
 	s.mu.Lock()
 	s.clients = append(s.clients, client)
 	s.mu.Unlock()

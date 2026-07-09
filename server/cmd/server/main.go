@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/luke/android-mac/server/internal/adb"
 	"github.com/luke/android-mac/server/internal/capture"
@@ -107,18 +108,37 @@ func main() {
 	adbManager, err = adb.NewManager()
 	if err != nil {
 		log.Printf("ADB not available: %v (USB connections disabled)", err)
-	} else if serials, serr := adbManager.ListDeviceSerials(); serr == nil && len(serials) > 0 {
-		for _, serial := range serials {
+	} else {
+		serials, serr := adbManager.ListDeviceSerials()
+		if serr == nil && len(serials) > 0 {
+			for _, serial := range serials {
+				if err := adbManager.RemoveAllReverse(serial); err != nil {
+					log.Printf("ADB cleanup failed on %s: %v", serial, err)
+				}
+				if err := adbManager.SetupReverse(serial, controlPort); err != nil {
+					log.Printf("ADB reverse control port failed on %s: %v", serial, err)
+				}
+			}
+			log.Printf("ADB reverse forwarding enabled for %d device(s)", len(serials))
+		} else {
+			log.Println("ADB available but no device connected")
+		}
+
+		// Reverse forwards live in the device's adbd and are lost when the
+		// USB link drops, so devices attached or replugged after startup need
+		// the control-port forward re-established. Without this a replugged
+		// device gets "Connection Failed" until the server restarts.
+		watcher := adb.NewWatcher(adbManager.ListDeviceSerials, serials, func(serial string) {
+			log.Printf("ADB device attached: %s — setting up reverse forwarding", serial)
 			if err := adbManager.RemoveAllReverse(serial); err != nil {
 				log.Printf("ADB cleanup failed on %s: %v", serial, err)
 			}
 			if err := adbManager.SetupReverse(serial, controlPort); err != nil {
 				log.Printf("ADB reverse control port failed on %s: %v", serial, err)
 			}
-		}
-		log.Printf("ADB reverse forwarding enabled for %d device(s)", len(serials))
-	} else {
-		log.Println("ADB available but no device connected")
+		})
+		go watcher.Run(2 * time.Second)
+		defer watcher.Stop()
 	}
 
 	// 2. Start mDNS advertisement

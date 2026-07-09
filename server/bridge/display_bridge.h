@@ -8,6 +8,7 @@ typedef struct {
     int height;
     int ppi;
     int hiDPI;
+    int serial; // unique per-instance identifier; must differ across concurrent displays
 } VirtualDisplayConfig;
 
 typedef struct {

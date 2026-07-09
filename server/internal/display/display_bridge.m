@@ -5,6 +5,7 @@
 #include "display_bridge.h"
 #include <string.h>
 #include <unistd.h>
+#include <dispatch/dispatch.h>
 
 // CGVirtualDisplay is a private API in CoreDisplay.framework.
 // We load it dynamically and use NSClassFromString to access the classes.
@@ -17,26 +18,20 @@
 static BOOL sFrameworkLoaded = NO;
 
 static BOOL LoadCoreDisplayFramework(void) {
-    if (sFrameworkLoaded) {
-        return YES;
-    }
-
-    // Try public Frameworks first (macOS 14+), then PrivateFrameworks (older)
-    NSBundle *bundle = [NSBundle bundleWithPath:
-        @"/System/Library/Frameworks/CoreDisplay.framework"];
-    if (!bundle) {
-        bundle = [NSBundle bundleWithPath:
-            @"/System/Library/PrivateFrameworks/CoreDisplay.framework"];
-    }
-    if (!bundle) {
-        return NO;
-    }
-
-    BOOL loaded = [bundle load];
-    if (loaded) {
-        sFrameworkLoaded = YES;
-    }
-    return loaded;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        // Try public Frameworks first (macOS 14+), then PrivateFrameworks (older)
+        NSBundle *bundle = [NSBundle bundleWithPath:
+            @"/System/Library/Frameworks/CoreDisplay.framework"];
+        if (!bundle) {
+            bundle = [NSBundle bundleWithPath:
+                @"/System/Library/PrivateFrameworks/CoreDisplay.framework"];
+        }
+        if (bundle) {
+            sFrameworkLoaded = [bundle load];
+        }
+    });
+    return sFrameworkLoaded;
 }
 
 VirtualDisplayResult CreateVirtualDisplay(VirtualDisplayConfig config) {
@@ -89,15 +84,22 @@ VirtualDisplayResult CreateVirtualDisplay(VirtualDisplayConfig config) {
         // Configure descriptor properties via KVC
         // These are the known properties of CGVirtualDisplayDescriptor.
         @try {
+            // vendorID/productID/name/serialNum previously were hardcoded identically
+            // for every instance. When a second virtual display was created while the
+            // first was still active, CoreDisplay appeared to treat it as the same
+            // device and the process crashed inside CreateVirtualDisplay. Deriving
+            // productID and name from config.serial gives each concurrent instance a
+            // distinct identity.
             [descriptor setValue:@(0x1234) forKey:@"vendorID"];
-            [descriptor setValue:@(0x5678) forKey:@"productID"];
-            [descriptor setValue:@"AndroidMac Virtual Display" forKey:@"name"];
+            [descriptor setValue:@(0x5678 + config.serial) forKey:@"productID"];
+            [descriptor setValue:[NSString stringWithFormat:@"AndroidMac Virtual Display %d", config.serial]
+                          forKey:@"name"];
             [descriptor setValue:@((unsigned int)config.width) forKey:@"maxPixelsWide"];
             [descriptor setValue:@((unsigned int)config.height) forKey:@"maxPixelsHigh"];
 
             // Set serialNum if the property exists
             @try {
-                [descriptor setValue:@(0) forKey:@"serialNum"];
+                [descriptor setValue:@(config.serial) forKey:@"serialNum"];
             } @catch (NSException *e) {
                 // serialNum may not exist on all versions, ignore
             }

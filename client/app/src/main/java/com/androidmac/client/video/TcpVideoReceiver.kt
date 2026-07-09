@@ -9,13 +9,13 @@ import java.io.DataInputStream
 import java.net.Socket
 
 /**
- * TCP 視訊接收器 — USB 模式下替代 UdpReceiver。
+ * TCP映像レシーバー — USBモードでUdpReceiverの代わりに使う。
  *
- * 連線至 server 的 TCP video port，讀取 length-prefixed 封包：
+ * serverのTCP video portに接続し、length-prefixedパケットを読み取る：
  *   [4-byte length (big-endian)] [17-byte header] [payload]
  *
- * 由於 TCP 保證順序和完整性，不需要分片重組 —
- * 每個封包都是完整的 NAL unit（fragIndex=0, fragTotal=1）。
+ * TCPは順序と完全性を保証するため、フラグメント再構成は不要 —
+ * 各パケットは完全なNAL unit（fragIndex=0, fragTotal=1）である。
  */
 class TcpVideoReceiver(private val host: String, private val port: Int) {
 
@@ -27,7 +27,7 @@ class TcpVideoReceiver(private val host: String, private val port: Int) {
     private var input: DataInputStream? = null
 
     /**
-     * 建立 TCP 連線到 server video port。
+     * server video portへTCP接続を確立する。
      */
     suspend fun connect() = withContext(Dispatchers.IO) {
         val sock = Socket(host, port)
@@ -39,7 +39,7 @@ class TcpVideoReceiver(private val host: String, private val port: Int) {
     }
 
     /**
-     * 持續接收 TCP 視訊封包，直到 coroutine 取消或連線斷開。
+     * coroutineがキャンセルされるか接続が切れるまで、TCP映像パケットを継続受信する。
      */
     suspend fun receiveLoop(onPacket: (VideoPacket) -> Unit) = withContext(Dispatchers.IO) {
         val inp = input ?: throw IllegalStateException("Not connected. Call connect() first.")
@@ -50,7 +50,7 @@ class TcpVideoReceiver(private val host: String, private val port: Int) {
 
         while (isActive) {
             try {
-                // 讀取 4-byte length prefix
+                // 4-byte length prefixを読み取る
                 val totalLen = inp.readInt()
                 if (totalLen <= 0 || totalLen > 2 * 1024 * 1024) {
                     Log.w(TAG, "Invalid packet length: $totalLen, skipping")
@@ -62,10 +62,10 @@ class TcpVideoReceiver(private val host: String, private val port: Int) {
                     readBuf = ByteArray(totalLen)
                 }
 
-                // 讀取完整封包（header + payload）into reusable buffer
+                // 完全なパケット（header + payload）を再利用可能なbufferに読み込む
                 inp.readFully(readBuf, 0, totalLen)
 
-                // 解析封包
+                // パケットを解析
                 val packet = PacketParser.parse(readBuf, 0, totalLen)
                 onPacket(packet)
             } catch (e: Exception) {

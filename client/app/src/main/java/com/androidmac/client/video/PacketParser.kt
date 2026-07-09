@@ -4,8 +4,8 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * 共用的 17-byte packet header 解析工具。
- * UDP 和 TCP 接收器都使用此解析器。
+ * 共通の17-byte packet header解析ユーティリティ。
+ * UDPとTCPの両レシーバーがこのパーサーを使用する。
  *
  * Header format (17 bytes, big-endian):
  *   [4] Sequence  (uint32)

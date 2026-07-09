@@ -33,14 +33,14 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 
 /**
- * DisplayService 是前景服務，負責管理所有連線狀態（控制、視訊、觸控），
- * 並在通知列顯示連線品質和中斷按鈕。
+ * DisplayServiceはフォアグラウンドサービスで、すべての接続状態（制御・映像・タッチ）を管理し、
+ * 通知バーに接続品質と切断ボタンを表示する。
  *
- * 生命週期：
- * 1. MainActivity 完成握手後啟動此服務
- * 2. 服務初始化 UDP 接收、觸控連線
- * 3. DisplayActivity 綁定服務，註冊影像回呼
- * 4. 用戶按中斷或連線斷開 → 服務清理並停止
+ * ライフサイクル：
+ * 1. MainActivityがハンドシェイク完了後にこのサービスを起動
+ * 2. サービスがUDP受信・タッチ接続を初期化
+ * 3. DisplayActivityがサービスにバインドし、映像コールバックを登録
+ * 4. ユーザーが切断を押すか接続が切れる → サービスがクリーンアップして停止
  */
 class DisplayService : Service() {
 
@@ -49,11 +49,11 @@ class DisplayService : Service() {
         private const val CHANNEL_ID = "display_service"
         private const val NOTIFICATION_ID = 1
         private const val ACTION_DISCONNECT = "com.androidmac.client.DISCONNECT"
-        private const val STATS_UPDATE_INTERVAL = 2000L // 每 2 秒更新
+        private const val STATS_UPDATE_INTERVAL = 2000L // 2秒ごとに更新
 
         /**
-         * MainActivity 握手成功後將 ControlClient 暫存於此，
-         * 服務啟動後立即取走。
+         * MainActivityがハンドシェイク成功後にControlClientを一時的にここへ保存し、
+         * サービス起動後すぐに取り出す。
          */
         @Volatile
         var pendingControlClient: ControlClient? = null
@@ -66,17 +66,17 @@ class DisplayService : Service() {
 
     private val binder = LocalBinder()
 
-    /** 影像封包回呼，由 DisplayActivity 註冊 */
+    /** 映像パケットのコールバック。DisplayActivityが登録する */
     interface VideoCallback {
         fun onNAL(data: ByteArray, frameType: Byte, timestamp: Long)
     }
 
-    /** 連線中斷回呼，由 DisplayActivity 註冊 */
+    /** 接続切断のコールバック。DisplayActivityが登録する */
     interface DisconnectCallback {
         fun onDisconnected()
     }
 
-    // 連線狀態
+    // 接続状態
     private var controlClient: ControlClient? = null
     private var udpReceiver: UdpReceiver? = null
     private var tcpVideoReceiver: TcpVideoReceiver? = null
@@ -87,13 +87,13 @@ class DisplayService : Service() {
     // Buffered channel for touch events — single consumer, no per-event coroutine overhead
     private val touchChannel = Channel<TouchEvent>(capacity = 64)
 
-    // 回呼
+    // コールバック
     @Volatile
     var videoCallback: VideoCallback? = null
     @Volatile
     var disconnectCallback: DisconnectCallback? = null
 
-    // 快取最近一組 SPS/PPS，供解碼器重啟時注入（例如鎖屏解鎖後）
+    // 直近のSPS/PPSをキャッシュし、デコーダー再起動時に注入する（例：ロック画面解除後など）
     @Volatile
     var cachedSPS: ByteArray? = null
         private set
@@ -101,7 +101,7 @@ class DisplayService : Service() {
     var cachedPPS: ByteArray? = null
         private set
 
-    // 連線參數
+    // 接続パラメータ
     private var serverHost: String = ""
     private var touchPort: Int = 0
     private var videoPort: Int = 0
@@ -109,14 +109,14 @@ class DisplayService : Service() {
     private var videoHeight: Int = 0
     private var connectionType: String = "wifi"
 
-    // 分片重組狀態
+    // フラグメント再構成の状態
     private var currentSequence: Long = -1
     private var currentFrameType: Byte = 0
     private var currentTimestamp: Long = 0
     private val fragments = mutableMapOf<Int, ByteArray>()
     private var expectedFragTotal: Int = 0
 
-    // 統計
+    // 統計情報
     private var packetCount: Long = 0
     private var submitCount: Long = 0
     private var dropCount: Long = 0
@@ -124,7 +124,7 @@ class DisplayService : Service() {
     private var lastSubmitCount: Long = 0
     private var lastStatsTime: Long = 0
 
-    // 通知更新
+    // 通知の更新
     private lateinit var notificationManager: NotificationManager
     private val statsHandler = Handler(Looper.getMainLooper())
     private val statsRunnable = object : Runnable {
@@ -134,7 +134,7 @@ class DisplayService : Service() {
         }
     }
 
-    // 中斷連線廣播接收器
+    // 切断ブロードキャストレシーバー
     private val disconnectReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             Log.d(TAG, "Disconnect action received")
@@ -147,7 +147,7 @@ class DisplayService : Service() {
         notificationManager = getSystemService(NotificationManager::class.java)
         createNotificationChannel()
 
-        // 註冊中斷廣播
+        // 切断ブロードキャストを登録
         registerReceiver(
             disconnectReceiver,
             IntentFilter(ACTION_DISCONNECT),
@@ -156,10 +156,10 @@ class DisplayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 立即進入前景模式
+        // 即座にフォアグラウンドモードへ移行
         startForeground(NOTIFICATION_ID, buildNotification(getString(R.string.notification_connecting)))
 
-        // 取得連線參數
+        // 接続パラメータを取得
         serverHost = intent?.getStringExtra("serverHost") ?: ""
         touchPort = intent?.getIntExtra("touchPort", 0) ?: 0
         videoPort = intent?.getIntExtra("videoPort", 0) ?: 0
@@ -168,7 +168,7 @@ class DisplayService : Service() {
         connectionType = intent?.getStringExtra("connectionType") ?: "wifi"
         Log.d(TAG, "Connection: type=$connectionType host=$serverHost touchPort=$touchPort videoPort=$videoPort")
 
-        // 取得 ControlClient
+        // ControlClientを取得
         controlClient = pendingControlClient
         pendingControlClient = null
 
@@ -181,7 +181,7 @@ class DisplayService : Service() {
         startTime = System.currentTimeMillis()
         lastStatsTime = startTime
 
-        // 啟動連線管線
+        // 接続パイプラインを起動
         startPipeline()
 
         return START_NOT_STICKY
@@ -201,8 +201,8 @@ class DisplayService : Service() {
     }
 
     /**
-     * 啟動視訊接收 + 觸控連線管線
-     * 根據 connectionType 選擇 UDP（WiFi）或 TCP（USB）傳輸
+     * 映像受信＋タッチ接続パイプラインを起動する。
+     * connectionTypeに応じてUDP（WiFi）またはTCP（USB）伝送を選択する。
      */
     private fun startPipeline() {
         serviceScope.launch {
@@ -213,13 +213,13 @@ class DisplayService : Service() {
                     startPipelineWiFi()
                 }
 
-                // 啟動觸控連線
+                // タッチ接続を起動
                 startTouchConnection()
 
-                // 監控控制連線
+                // 制御接続を監視
                 monitorControlConnection()
 
-                // 更新通知為已連線
+                // 通知を「接続済み」に更新
                 Handler(Looper.getMainLooper()).post {
                     val modeLabel = if (connectionType == "usb") "USB" else "WiFi"
                     updateNotification("${getString(R.string.notification_connected)} [$modeLabel]")
@@ -236,9 +236,7 @@ class DisplayService : Service() {
         }
     }
 
-    /**
-     * WiFi 模式：綁定 UDP socket → 發送 ClientReady（含 UDP port）→ 啟動 UDP 接收
-     */
+    /** WiFiモード：UDP socketをバインド → ClientReadyを送信（UDP portを含む） → UDP受信を開始 */
     private suspend fun startPipelineWiFi() {
         val receiver = UdpReceiver(0)
         val actualPort = receiver.bind()
@@ -256,10 +254,10 @@ class DisplayService : Service() {
     }
 
     /**
-     * USB 模式：發送 ClientReady（UDPPort=0）→ 連接 TCP 視訊 → 啟動 TCP 接收
+     * USBモード：ClientReadyを送信（UDPPort=0） → TCP映像に接続 → TCP受信を開始
      */
     private suspend fun startPipelineUSB() {
-        // USB 模式下 UDPPort = 0，通知 server 使用 TCP 視訊
+        // USBモードではUDPPort = 0とし、serverにTCP映像を使うよう伝える
         controlClient?.sendReady(0)
         Log.d(TAG, "USB: Sent ClientReady (TCP mode)")
 
@@ -275,9 +273,7 @@ class DisplayService : Service() {
         }
     }
 
-    /**
-     * 監控 TCP 控制連線是否斷開
-     */
+    /** TCP制御接続が切断されたかを監視する */
     private fun monitorControlConnection() {
         serviceScope.launch {
             try {
@@ -299,8 +295,8 @@ class DisplayService : Service() {
     }
 
     /**
-     * 啟動觸控 TCP 連線，並啟動 Channel 消費者協程。
-     * 單一協程消費所有觸控事件，避免 per-event launch 的排程開銷。
+     * タッチ用TCP接続を起動し、Channelのコンシューマーcoroutineも起動する。
+     * 単一のcoroutineが全タッチイベントを消費し、イベントごとにlaunchするスケジューリングオーバーヘッドを避ける。
      */
     private fun startTouchConnection() {
         if (touchPort <= 0 || serverHost.isEmpty()) {
@@ -333,36 +329,36 @@ class DisplayService : Service() {
     }
 
     /**
-     * 發送觸控事件（由 DisplayActivity 呼叫）。
-     * 使用 Channel.trySend 替代 launch，避免每事件創建協程的開銷。
+     * タッチイベントを送信する（DisplayActivityから呼ばれる）。
+     * launchの代わりにChannel.trySendを使い、イベントごとにcoroutineを生成するオーバーヘッドを避ける。
      */
     fun sendTouchEvent(event: TouchEvent) {
         touchChannel.trySend(event)
     }
 
     /**
-     * 處理收到的 UDP 封包，進行分片重組。
-     * SPS/PPS 會被快取，供解碼器重啟時立即注入。
+     * 受信したUDPパケットを処理し、フラグメントを再構成する。
+     * SPS/PPSはキャッシュされ、デコーダー再起動時に即座に注入される。
      */
     private fun handlePacket(packet: VideoPacket) {
         packetCount++
 
         if (packet.fragTotal <= 1) {
-            // 快取 SPS/PPS 供解碼器重啟恢復
+            // デコーダー再起動時の復元用にSPS/PPSをキャッシュ
             when (packet.frameType) {
                 0x10.toByte() -> cachedSPS = packet.payload.copyOf()
                 0x11.toByte() -> cachedPPS = packet.payload.copyOf()
             }
-            // 單分片 NAL，直接提交
+            // 単一フラグメントのNAL、そのまま提出
             submitCount++
             videoCallback?.onNAL(packet.payload, packet.frameType, packet.timestamp)
             return
         }
 
-        // 多分片重組
+        // 複数フラグメントの再構成
         synchronized(this) {
             if (packet.sequence != currentSequence) {
-                // 新的 frame —— 如果上一個未完成則記錄丟棄
+                // 新しいframe —— 前回が未完成なら破棄として記録
                 if (currentSequence >= 0 && fragments.size < expectedFragTotal) {
                     dropCount++
                 }
@@ -376,7 +372,7 @@ class DisplayService : Service() {
             fragments[packet.fragIndex] = packet.payload
 
             if (fragments.size == expectedFragTotal) {
-                // 所有分片到齊，重組
+                // 全フラグメントが揃った、再構成する
                 val assembled = ByteArrayOutputStream()
                 for (i in 0 until expectedFragTotal) {
                     val frag = fragments[i]
@@ -398,16 +394,14 @@ class DisplayService : Service() {
         }
     }
 
-    /**
-     * 取得目前的連線統計
-     */
+    /** 現在の接続統計を取得する */
     fun getStats(): ConnectionStats {
         val now = System.currentTimeMillis()
         val elapsed = (now - startTime) / 1000L
         val total = submitCount + dropCount
         val lossRate = if (total > 0) dropCount.toFloat() / total.toFloat() else 0f
 
-        // 計算即時 FPS
+        // リアルタイムFPSを計算
         val dt = (now - lastStatsTime) / 1000f
         val fps = if (dt > 0) (submitCount - lastSubmitCount).toFloat() / dt else 0f
 
@@ -421,9 +415,7 @@ class DisplayService : Service() {
         )
     }
 
-    /**
-     * 中斷連線並停止服務
-     */
+    /** 接続を切断してサービスを停止する */
     fun disconnect() {
         Log.d(TAG, "Disconnecting...")
         disconnectCallback?.onDisconnected()
@@ -450,7 +442,7 @@ class DisplayService : Service() {
         disconnectCallback = null
     }
 
-    // ——— 通知相關 ———
+    // ——— 通知関連 ———
 
     private fun createNotificationChannel() {
         val channel = NotificationChannel(

@@ -1,7 +1,7 @@
 package com.androidmac.client.service
 
 /**
- * 連線品質統計數據，由 DisplayService 計算並用於更新通知列。
+ * 接続品質の統計データ。DisplayServiceが計算し、通知バーの更新に使う。
  */
 data class ConnectionStats(
     val fps: Float = 0f,

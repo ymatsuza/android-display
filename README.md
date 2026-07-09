@@ -79,9 +79,11 @@ adb install client/app/build/outputs/apk/debug/app-debug.apk
 
 2. **Open the Android app** on your tablet — it will auto-discover the Mac via mDNS
 
-3. **Tap to connect** — the tablet becomes an extended display
+3. **Choose orientation** — select 横向き (landscape) or 縦向き (portrait), and optionally check 上下反転（180°） to flip the display upside-down (e.g. for mounting the tablet rotated)
 
-4. **Drag windows** from your Mac to the extended display
+4. **Tap Connect** — the tablet becomes an extended display
+
+5. **Drag windows** from your Mac to the extended display
 
 ### USB Mode
 
@@ -90,7 +92,7 @@ For lower latency, connect your Android device via USB:
 1. Enable USB debugging on your Android device
 2. Connect via USB cable
 3. Start the server (it will automatically set up ADB reverse forwarding)
-4. Open the Android app and connect
+4. Open the Android app, choose orientation, and connect
 
 ## Protocol
 

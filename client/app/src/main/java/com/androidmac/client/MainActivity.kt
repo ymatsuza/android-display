@@ -9,6 +9,7 @@ import android.util.Log
 import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.RadioGroup
 import android.widget.Spinner
 import android.widget.TextView
@@ -39,6 +40,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ipInputLayout: TextInputLayout
     private lateinit var connectButton: Button
     private lateinit var connectionMode: RadioGroup
+    private lateinit var orientationMode: RadioGroup
+    private lateinit var orientationReverse: CheckBox
     private lateinit var resolutionSpinner: Spinner
     private lateinit var bitrateSpinner: Spinner
 
@@ -64,10 +67,12 @@ class MainActivity : AppCompatActivity() {
         ipInputLayout = findViewById(R.id.ipInputLayout)
         connectButton = findViewById(R.id.connectButton)
         connectionMode = findViewById(R.id.connectionMode)
+        orientationMode = findViewById(R.id.orientationMode)
+        orientationReverse = findViewById(R.id.orientationReverse)
         resolutionSpinner = findViewById(R.id.resolutionSpinner)
         bitrateSpinner = findViewById(R.id.bitrateSpinner)
 
-        // 解析度選擇下拉選單
+        // 解像度選択ドロップダウン
         ArrayAdapter.createFromResource(
             this, R.array.resolution_options, android.R.layout.simple_spinner_item
         ).also { adapter ->
@@ -75,7 +80,7 @@ class MainActivity : AppCompatActivity() {
             resolutionSpinner.adapter = adapter
         }
 
-        // 畫質選擇下拉選單
+        // 画質選択ドロップダウン
         ArrayAdapter.createFromResource(
             this, R.array.bitrate_options, android.R.layout.simple_spinner_item
         ).also { adapter ->
@@ -85,17 +90,17 @@ class MainActivity : AppCompatActivity() {
 
         connectButton.setOnClickListener { onConnectClicked() }
 
-        // WiFi / USB 模式切換
+        // WiFi / USB モード切り替え
         connectionMode.setOnCheckedChangeListener { _, checkedId ->
             isUsbMode = (checkedId == R.id.modeUsb)
             if (isUsbMode) {
-                // USB 模式：固定 localhost，隱藏 IP 輸入和搜尋狀態
+                // USBモード：localhost固定、IP入力と検索状態を隠す
                 manualIpInput.setText("127.0.0.1")
                 ipInputLayout.visibility = View.GONE
-                statusText.text = "USB 模式 — 請確認裝置已透過 USB 連接"
+                statusText.text = "USBモード — デバイスがUSB接続されていることを確認してください"
                 discoveryJob?.cancel()
             } else {
-                // WiFi 模式：恢復搜尋
+                // WiFiモード：検索を再開
                 ipInputLayout.visibility = View.VISIBLE
                 manualIpInput.setText(discoveredHost ?: "")
                 statusText.text = "Scanning..."
@@ -103,7 +108,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 請求通知權限 (Android 13+)
+        // 通知権限をリクエスト (Android 13+)
         requestNotificationPermission()
 
         startDiscovery()
@@ -158,14 +163,19 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                // 在 MainActivity 執行握手以便即時回饋錯誤
+                // MainActivityでハンドシェイクを実行し、エラーを即座にフィードバック
                 val controlClient = ControlClient()
                 val metrics = resources.displayMetrics
+                val isPortrait = orientationMode.checkedRadioButtonId == R.id.orientationPortrait
 
-                // 套用解析度縮放（維持比例，H.264 要求偶數寬高）
+                // 解像度スケーリングを適用（比率維持、H.264は偶数の幅・高さが必要）
                 val scale = scaleFactors[resolutionSpinner.selectedItemPosition]
-                val scaledWidth = ((metrics.widthPixels * scale).toInt() and -2) // round down to even
-                val scaledHeight = ((metrics.heightPixels * scale).toInt() and -2)
+                val rawLongSide = maxOf(metrics.widthPixels, metrics.heightPixels) * scale
+                val rawShortSide = minOf(metrics.widthPixels, metrics.heightPixels) * scale
+                val longSide = rawLongSide.toInt() and -2 // round down to even
+                val shortSide = rawShortSide.toInt() and -2
+                val scaledWidth = if (isPortrait) shortSide else longSide
+                val scaledHeight = if (isPortrait) longSide else shortSide
                 val bitrate = bitrateValues[bitrateSpinner.selectedItemPosition]
                 val serverHello = controlClient.connect(
                     host, port, scaledWidth, scaledHeight, metrics.densityDpi, connectionType, bitrate
@@ -173,10 +183,10 @@ class MainActivity : AppCompatActivity() {
 
                 Log.d(TAG, "Handshake complete: $serverHello")
 
-                // 將 ControlClient 暫存給 DisplayService
+                // ControlClientをDisplayServiceに一時保存
                 DisplayService.pendingControlClient = controlClient
 
-                // 啟動前景服務
+                // フォアグラウンドサービスを起動
                 val serviceIntent = Intent(this@MainActivity, DisplayService::class.java).apply {
                     putExtra("serverHost", host)
                     putExtra("touchPort", serverHello.touchPort)
@@ -187,10 +197,12 @@ class MainActivity : AppCompatActivity() {
                 }
                 startForegroundService(serviceIntent)
 
-                // 啟動 DisplayActivity
+                // DisplayActivityを起動
                 val displayIntent = Intent(this@MainActivity, DisplayActivity::class.java).apply {
                     putExtra("width", serverHello.virtualDisplay.width)
                     putExtra("height", serverHello.virtualDisplay.height)
+                    putExtra("orientation", if (isPortrait) "portrait" else "landscape")
+                    putExtra("reverse", orientationReverse.isChecked)
                 }
                 startActivity(displayIntent)
             } catch (e: Exception) {

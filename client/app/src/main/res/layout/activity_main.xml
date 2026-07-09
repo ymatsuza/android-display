@@ -1,97 +1,131 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:gravity="center"
-    android:padding="32dp">
+    android:layout_height="match_parent">
 
-    <TextView
-        android:id="@+id/statusText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Scanning..."
-        android:textSize="18sp" />
-
-    <RadioGroup
-        android:id="@+id/connectionMode"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginTop="16dp">
-
-        <RadioButton
-            android:id="@+id/modeWifi"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="WiFi"
-            android:checked="true" />
-
-        <RadioButton
-            android:id="@+id/modeUsb"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="USB"
-            android:layout_marginStart="16dp" />
-    </RadioGroup>
-
-    <com.google.android.material.textfield.TextInputLayout
-        android:id="@+id/ipInputLayout"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp">
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:padding="32dp">
 
-        <com.google.android.material.textfield.TextInputEditText
-            android:id="@+id/manualIpInput"
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Scanning..."
+            android:textSize="18sp" />
+
+        <RadioGroup
+            android:id="@+id/connectionMode"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="16dp">
+
+            <RadioButton
+                android:id="@+id/modeWifi"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="WiFi"
+                android:checked="true" />
+
+            <RadioButton
+                android:id="@+id/modeUsb"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="USB"
+                android:layout_marginStart="16dp" />
+        </RadioGroup>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/ipInputLayout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="IP (e.g. 192.168.1.100)" />
-    </com.google.android.material.textfield.TextInputLayout>
+            android:layout_marginTop="16dp">
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:layout_marginTop="12dp">
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/manualIpInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="IP (e.g. 192.168.1.100)" />
+        </com.google.android.material.textfield.TextInputLayout>
 
-        <TextView
+        <RadioGroup
+            android:id="@+id/orientationMode"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/resolution_label"
-            android:textSize="16sp" />
+            android:orientation="horizontal"
+            android:layout_marginTop="16dp">
 
-        <Spinner
-            android:id="@+id/resolutionSpinner"
+            <RadioButton
+                android:id="@+id/orientationLandscape"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/orientation_landscape"
+                android:checked="true" />
+
+            <RadioButton
+                android:id="@+id/orientationPortrait"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/orientation_portrait"
+                android:layout_marginStart="16dp" />
+        </RadioGroup>
+
+        <CheckBox
+            android:id="@+id/orientationReverse"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp" />
+            android:text="@string/orientation_reverse"
+            android:layout_marginTop="8dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/resolution_label"
+                android:textSize="16sp" />
+
+            <Spinner
+                android:id="@+id/resolutionSpinner"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="8dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/bitrate_label"
+                android:textSize="16sp" />
+
+            <Spinner
+                android:id="@+id/bitrateSpinner"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/connectButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Connect" />
     </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:layout_marginTop="8dp">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/bitrate_label"
-            android:textSize="16sp" />
-
-        <Spinner
-            android:id="@+id/bitrateSpinner"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp" />
-    </LinearLayout>
-
-    <Button
-        android:id="@+id/connectButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="Connect" />
-</LinearLayout>
+</ScrollView>

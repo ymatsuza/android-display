@@ -1,23 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">AndroidMac</string>
-    <string name="notification_channel_name">延伸螢幕服務</string>
-    <string name="notification_channel_desc">延伸螢幕連線中的通知</string>
-    <string name="notification_disconnect">中斷連線</string>
-    <string name="notification_connected">已連線</string>
-    <string name="notification_connecting">連線中…</string>
-    <string name="notification_stats_format">已連線 | FPS: %1$.0f | 丟包: %2$.1f%%</string>
-    <string name="resolution_label">解析度</string>
+    <string name="notification_channel_name">拡張ディスプレイサービス</string>
+    <string name="notification_channel_desc">拡張ディスプレイ接続中の通知</string>
+    <string name="notification_disconnect">接続解除</string>
+    <string name="notification_connected">接続済み</string>
+    <string name="notification_connecting">接続中…</string>
+    <string name="notification_stats_format">接続済み | FPS: %1$.0f | パケット損失: %2$.1f%%</string>
+    <string name="orientation_landscape">横向き</string>
+    <string name="orientation_portrait">縦向き</string>
+    <string name="orientation_reverse">上下反転（180°）</string>
+    <string name="resolution_label">解像度</string>
     <string-array name="resolution_options">
-        <item>100%（原始）</item>
+        <item>100%（オリジナル）</item>
         <item>75%</item>
         <item>50%</item>
     </string-array>
-    <string name="bitrate_label">畫質</string>
+    <string name="bitrate_label">画質</string>
     <string-array name="bitrate_options">
-        <item>8 Mbps（高畫質）</item>
+        <item>8 Mbps（高画質）</item>
         <item>4 Mbps</item>
         <item>2 Mbps</item>
-        <item>1 Mbps（省頻寬）</item>
+        <item>1 Mbps（省帯域）</item>
     </string-array>
 </resources>

@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.ActivityInfo
 import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
@@ -22,8 +23,8 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * DisplayActivity 負責視訊解碼與畫面顯示。
- * 所有連線狀態由 DisplayService 管理，Activity 透過綁定 Service 接收 NAL 資料。
+ * DisplayActivity は映像デコードと画面表示を担当する。
+ * すべての接続状態は DisplayService が管理し、Activity は Service にバインドして NAL データを受け取る。
  */
 class DisplayActivity : AppCompatActivity() {
 
@@ -37,7 +38,7 @@ class DisplayActivity : AppCompatActivity() {
     private var videoWidth: Int = 0
     private var videoHeight: Int = 0
 
-    // Service 綁定
+    // Service バインド
     private var displayService: DisplayService? = null
     private var serviceBound = false
 
@@ -48,21 +49,21 @@ class DisplayActivity : AppCompatActivity() {
             serviceBound = true
             Log.d(TAG, "Bound to DisplayService")
 
-            // 註冊影像回呼
+            // 映像コールバックを登録
             service.videoCallback = object : DisplayService.VideoCallback {
                 override fun onNAL(data: ByteArray, frameType: Byte, timestamp: Long) {
                     videoDecoder?.submitNAL(data, frameType, timestamp)
                 }
             }
 
-            // 註冊斷線回呼
+            // 切断コールバックを登録
             service.disconnectCallback = object : DisplayService.DisconnectCallback {
                 override fun onDisconnected() {
                     runOnUiThread { finish() }
                 }
             }
 
-            // 設定觸控處理
+            // タッチ処理を設定
             setupTouchHandling()
         }
 
@@ -76,6 +77,14 @@ class DisplayActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val isPortraitOrientation = intent.getStringExtra("orientation") == "portrait"
+        val isReversed = intent.getBooleanExtra("reverse", false)
+        requestedOrientation = when {
+            isPortraitOrientation && isReversed -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+            isPortraitOrientation -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            isReversed -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+            else -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        }
         setContentView(R.layout.activity_display)
 
         enterImmersiveMode()
@@ -98,7 +107,7 @@ class DisplayActivity : AppCompatActivity() {
             }
         })
 
-        // 綁定 DisplayService
+        // DisplayService にバインド
         val intent = Intent(this, DisplayService::class.java)
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
@@ -126,8 +135,8 @@ class DisplayActivity : AppCompatActivity() {
         videoDecoder = decoder
         Log.d(TAG, "Decoder started (async callback)")
 
-        // 注入快取的 SPS/PPS，讓解碼器在下一個 IDR 到來時立即恢復畫面
-        // （例如鎖屏解鎖後 Surface 重建的場景）
+        // キャッシュ済みSPS/PPSを注入し、次のIDRが来た時点で即座に画面を復元させる
+        // （例：ロック画面解除後にSurfaceが再生成されるケース）
         displayService?.cachedSPS?.let { sps ->
             decoder.submitNAL(sps, VideoDecoder.FRAME_TYPE_SPS, 0)
             Log.d(TAG, "Injected cached SPS (${sps.size} bytes)")
@@ -207,7 +216,7 @@ class DisplayActivity : AppCompatActivity() {
         super.onDestroy()
         stopDecoder()
         if (serviceBound) {
-            // 清除回呼避免 leak
+            // leak防止のためコールバックを解除
             displayService?.videoCallback = null
             displayService?.disconnectCallback = null
             unbindService(serviceConnection)

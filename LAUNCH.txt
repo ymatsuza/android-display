@@ -1,0 +1,29 @@
+android-display 起動手順
+=========================
+
+■ 1. Macサーバーを起動
+    cd ~/repos/android-display
+    ./server/android-display-server
+
+    (ビルドしていない場合は先に: cd server && go build -o android-display-server ./cmd/server)
+
+■ 2. Androidアプリを開く
+    - WiFi接続: mDNSで自動的にMacを検出。IPが自動入力される
+    - USB接続: 事前にUSBデバッグを有効化してケーブル接続 → 「USB」ラジオボタンを選択
+      (サーバー起動時にADB reverse forwardingが自動設定される)
+
+■ 3. 画面の向きを選ぶ（Connectを押す前に設定）
+    - 横向き / 縦向き のラジオボタン
+    - 「上下反転（180°）」チェックボックス（タブレットを180度回転させて設置する場合など）
+
+■ 4. 解像度・画質を選ぶ
+    - 解像度: 100%（オリジナル） / 75% / 50%
+    - 画質: 8Mbps / 4Mbps / 2Mbps / 1Mbps
+
+■ 5. Connect をタップ
+    - 接続が完了するとタブレットがMacの拡張ディスプレイになる
+    - Mac側でウィンドウをドラッグして拡張ディスプレイに移動できる
+
+■ 終了方法
+    - Mac: サーバーをCtrl+Cで停止
+    - Android: 拡張ディスプレイ画面から戻る操作で切断

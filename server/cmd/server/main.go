@@ -137,6 +137,21 @@ func main() {
 				log.Printf("ADB reverse control port failed on %s: %v", serial, err)
 			}
 		})
+		// A disconnect→reconnect completing within one poll interval never
+		// changes the device listing, so the diff above misses it. Verify the
+		// control-port forward every cycle and re-add it if the link drop took
+		// it away. Additive only: per-client touch/video forwards are set up
+		// during the connect handshake and must not be cleared here.
+		watcher.EnsureKnown(func(serial string) {
+			ok, err := adbManager.HasReverse(serial, controlPort)
+			if err != nil || ok {
+				return
+			}
+			log.Printf("ADB reverse control port missing on %s — re-establishing", serial)
+			if err := adbManager.SetupReverse(serial, controlPort); err != nil {
+				log.Printf("ADB reverse control port failed on %s: %v", serial, err)
+			}
+		})
 		go watcher.Run(2 * time.Second)
 		defer watcher.Stop()
 	}

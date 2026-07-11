@@ -92,6 +92,32 @@ func (m *Manager) SetupReverse(serial string, port int) error {
 	return nil
 }
 
+// HasReverse reports whether the given device currently has a reverse
+// forwarding rule listening on tcp:port. Reverse forwards live in the
+// device's adbd and silently vanish when the USB link drops, so callers
+// polling for device presence must also verify the forwards survived.
+func (m *Manager) HasReverse(serial string, port int) (bool, error) {
+	out, err := exec.Command(m.adbPath, "-s", serial, "reverse", "--list").Output()
+	if err != nil {
+		return false, fmt.Errorf("adb -s %s reverse --list failed: %w", serial, err)
+	}
+	return reverseListHas(string(out), port), nil
+}
+
+// reverseListHas parses `adb reverse --list` output. Each line looks like
+// "UsbFfs tcp:9000 tcp:9000" — the first field is the transport name (not
+// the serial), the second is the device-side listen spec.
+func reverseListHas(out string, port int) bool {
+	portStr := fmt.Sprintf("tcp:%d", port)
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[1] == portStr {
+			return true
+		}
+	}
+	return false
+}
+
 // RemoveReverse removes a single reverse forwarding rule on the given device.
 func (m *Manager) RemoveReverse(serial string, port int) error {
 	portStr := fmt.Sprintf("tcp:%d", port)

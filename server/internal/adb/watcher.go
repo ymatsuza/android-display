@@ -7,10 +7,11 @@ import "time"
 // authorized). Reverse forwards live in the device's adbd and vanish when the
 // USB link drops, so every appearance needs its forwards re-established.
 type Watcher struct {
-	list  func() ([]string, error)
-	onNew func(serial string)
-	known map[string]struct{}
-	stop  chan struct{}
+	list   func() ([]string, error)
+	onNew  func(serial string)
+	ensure func(serial string)
+	known  map[string]struct{}
+	stop   chan struct{}
 }
 
 // NewWatcher creates a watcher. Serials in initial are considered already
@@ -28,6 +29,14 @@ func NewWatcher(list func() ([]string, error), initial []string, onNew func(seri
 	}
 }
 
+// EnsureKnown registers a callback invoked every poll for serials that were
+// already known. A USB drop and reconnect completing between two polls never
+// leaves the known set, yet its reverse forwards died with the link — the
+// callback lets the caller verify and repair them.
+func (w *Watcher) EnsureKnown(f func(serial string)) {
+	w.ensure = f
+}
+
 // poll runs one detection cycle. A listing error leaves the known set
 // untouched so a transient adb failure doesn't re-trigger onNew for devices
 // that never actually disconnected.
@@ -41,6 +50,8 @@ func (w *Watcher) poll() {
 		current[s] = struct{}{}
 		if _, ok := w.known[s]; !ok {
 			w.onNew(s)
+		} else if w.ensure != nil {
+			w.ensure(s)
 		}
 	}
 	w.known = current

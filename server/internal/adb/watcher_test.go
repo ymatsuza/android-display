@@ -72,6 +72,48 @@ func TestWatcherListErrorKeepsKnownSet(t *testing.T) {
 	}
 }
 
+func TestWatcherEnsureRunsForKnownSerials(t *testing.T) {
+	// A USB drop and reconnect that completes entirely between two polls is
+	// invisible to the diff detection: the serial stays "known" but its
+	// reverse forwards died with the link. EnsureKnown must fire every poll
+	// for known serials so the caller can verify and repair them.
+	var ensured []string
+	w := NewWatcher(
+		func() ([]string, error) { return []string{"A"}, nil },
+		[]string{"A"},
+		func(s string) { t.Fatalf("onNew must not fire for known serial %s", s) },
+	)
+	w.EnsureKnown(func(s string) { ensured = append(ensured, s) })
+
+	w.poll()
+	w.poll()
+	if len(ensured) != 2 || ensured[0] != "A" || ensured[1] != "A" {
+		t.Fatalf("ensure must run for known serial on every poll, got %v", ensured)
+	}
+}
+
+func TestWatcherEnsureSkipsNewSerials(t *testing.T) {
+	// New serials are fully handled by onNew (cleanup + setup); ensure must
+	// not double up on them in the same cycle.
+	serials := []string{"A"}
+	var newSeen, ensured []string
+	w := NewWatcher(
+		func() ([]string, error) { return serials, nil },
+		[]string{"A"},
+		func(s string) { newSeen = append(newSeen, s) },
+	)
+	w.EnsureKnown(func(s string) { ensured = append(ensured, s) })
+
+	serials = []string{"A", "B"}
+	w.poll()
+	if len(newSeen) != 1 || newSeen[0] != "B" {
+		t.Fatalf("expected onNew for B, got %v", newSeen)
+	}
+	if len(ensured) != 1 || ensured[0] != "A" {
+		t.Fatalf("ensure must fire only for known A, got %v", ensured)
+	}
+}
+
 func TestWatcherRunStops(t *testing.T) {
 	w := NewWatcher(
 		func() ([]string, error) { return nil, nil },

@@ -1,5 +1,6 @@
 # Go
 server/android-mac-server
+server/android-display-server
 server/server
 *.exe
 *.test

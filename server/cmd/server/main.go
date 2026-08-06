@@ -18,7 +18,8 @@ import (
 	"github.com/luke/android-mac/server/internal/discovery"
 	"github.com/luke/android-mac/server/internal/display"
 	"github.com/luke/android-mac/server/internal/encoder"
-	"github.com/luke/android-mac/server/internal/input"
+	// タッチ注入を無効化中のため未使用（startPipelineCommon のコメントブロック参照）
+	// "github.com/luke/android-mac/server/internal/input"
 	"github.com/luke/android-mac/server/internal/protocol"
 	"github.com/luke/android-mac/server/internal/stream"
 	"github.com/luke/android-mac/server/internal/touch"
@@ -317,47 +318,57 @@ func startPipelineCommon(ctx context.Context, cancel context.CancelFunc, width, 
 	defer vd.Close()
 	log.Printf("virtual display created: 0x%x (%dx%d)", vd.DisplayID(), width, height)
 
-	// Input injector + gesture recognizer for this display
-	injector := input.NewInjector(vd.DisplayID())
-	gesture := input.NewGestureRecognizer(func(me input.MouseEvent) {
-		switch me.Action {
-		case input.ActionMouseMove:
-			injector.MouseMove(me.X, me.Y)
-		case input.ActionLeftDown:
-			injector.LeftMouseDown(me.X, me.Y)
-		case input.ActionLeftUp:
-			injector.LeftMouseUp(me.X, me.Y)
-		case input.ActionLeftDragged:
-			injector.LeftMouseDragged(me.X, me.Y)
-		case input.ActionRightDown:
-			injector.RightMouseDown(me.X, me.Y)
-		case input.ActionRightUp:
-			injector.RightMouseUp(me.X, me.Y)
-		case input.ActionScroll:
-			injector.ScrollWheel(me.ScrollX, me.ScrollY)
-		}
-	})
-	defer gesture.Close()
-
-	// Wire touch events → pen events bypass gesture recognizer
-	touchServer.OnEvent(func(e touch.Event) {
-		if e.Type == touch.TouchTypePen {
-			switch e.Action {
-			case touch.TouchActionDown:
-				injector.TabletProximityEnter()
-				injector.TabletDown(e.X, e.Y, e.Pressure, e.TiltX, e.TiltY)
-			case touch.TouchActionMove:
-				injector.TabletDragged(e.X, e.Y, e.Pressure, e.TiltX, e.TiltY)
-			case touch.TouchActionUp:
-				injector.TabletUp(e.X, e.Y, e.Pressure, e.TiltX, e.TiltY)
-				injector.TabletProximityLeave()
-			}
-		} else {
-			gesture.HandleEvent(e)
-		}
-	})
-	defer touchServer.OnEvent(nil)
-	log.Println("touch input enabled")
+	// タッチ注入は意図的に無効化している（2026-08-07）。
+	// 理由: 注入は input_bridge.m の CGWarpMouseCursorPosition で macOS の唯一の
+	// 共有カーソルを物理的にワープさせるため、タブレットを触るたびに他ディスプレイ
+	// （Sidecar 等）で作業中のカーソルが奪われる。
+	// 復帰させるには下のブロックと import の "input" を両方コメント解除する。
+	// タッチサーバーはハンドラ未登録のまま listen を続け、届いたイベントは
+	// touch/server.go の nil ハンドラ判定で読み捨てられる（プロトコル無変更＝
+	// 既存クライアントとそのまま互換）。
+	//
+	// // Input injector + gesture recognizer for this display
+	// injector := input.NewInjector(vd.DisplayID())
+	// gesture := input.NewGestureRecognizer(func(me input.MouseEvent) {
+	// 	switch me.Action {
+	// 	case input.ActionMouseMove:
+	// 		injector.MouseMove(me.X, me.Y)
+	// 	case input.ActionLeftDown:
+	// 		injector.LeftMouseDown(me.X, me.Y)
+	// 	case input.ActionLeftUp:
+	// 		injector.LeftMouseUp(me.X, me.Y)
+	// 	case input.ActionLeftDragged:
+	// 		injector.LeftMouseDragged(me.X, me.Y)
+	// 	case input.ActionRightDown:
+	// 		injector.RightMouseDown(me.X, me.Y)
+	// 	case input.ActionRightUp:
+	// 		injector.RightMouseUp(me.X, me.Y)
+	// 	case input.ActionScroll:
+	// 		injector.ScrollWheel(me.ScrollX, me.ScrollY)
+	// 	}
+	// })
+	// defer gesture.Close()
+	//
+	// // Wire touch events → pen events bypass gesture recognizer
+	// touchServer.OnEvent(func(e touch.Event) {
+	// 	if e.Type == touch.TouchTypePen {
+	// 		switch e.Action {
+	// 		case touch.TouchActionDown:
+	// 			injector.TabletProximityEnter()
+	// 			injector.TabletDown(e.X, e.Y, e.Pressure, e.TiltX, e.TiltY)
+	// 		case touch.TouchActionMove:
+	// 			injector.TabletDragged(e.X, e.Y, e.Pressure, e.TiltX, e.TiltY)
+	// 		case touch.TouchActionUp:
+	// 			injector.TabletUp(e.X, e.Y, e.Pressure, e.TiltX, e.TiltY)
+	// 			injector.TabletProximityLeave()
+	// 		}
+	// 	} else {
+	// 		gesture.HandleEvent(e)
+	// 	}
+	// })
+	// defer touchServer.OnEvent(nil)
+	// log.Println("touch input enabled")
+	log.Println("touch input DISABLED (injection commented out in main.go)")
 
 	// H.264 encoder
 	enc, err := encoder.New(encoder.Config{
@@ -400,7 +411,7 @@ func startPipelineCommon(ctx context.Context, cancel context.CancelFunc, width, 
 	}
 	defer cap.Stop()
 
-	log.Println("pipeline active (video + touch)")
+	log.Println("pipeline active (video only — touch injection disabled)")
 	<-ctx.Done()
 	log.Println("pipeline stopping...")
 }

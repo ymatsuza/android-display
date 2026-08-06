@@ -1,13 +1,13 @@
 # android-display
 
-Turn your Android tablet into a wireless extended display for macOS, with touch and S Pen pressure support.
+Turn your Android tablet into a wireless extended display for macOS.
+
+> **Note:** Touch and S Pen input injection is **currently disabled** in this fork — the tablet is display-only. See [Touch input (disabled)](#touch-input-disabled).
 
 ## Features
 
 - **Wireless Extended Display** — Creates a real macOS virtual display on your Android tablet over WiFi
 - **USB Mode** — Also supports USB connection via ADB reverse forwarding for lower latency
-- **Touch Input** — Tap, drag, scroll, long-press right-click, double-tap on the extended display
-- **S Pen Pressure** — Samsung S Pen pressure and tilt data mapped to macOS tablet events for drawing apps
 - **Auto Discovery** — mDNS/Bonjour zero-config, Android app finds your Mac automatically
 - **Hardware Encoding** — H.264 via VideoToolbox (Mac) and MediaCodec (Android), low latency
 - **Adjustable Quality** — 8M / 4M / 2M / 1M bitrate selector
@@ -26,8 +26,8 @@ Mac (Go + CGo Server)                    Android (Kotlin Client)
 │ VideoToolbox H.264   │                │ (fullscreen display) │
 │ (hw encode)          │                │                      │
 │                      │◀───────────────│ TouchCollector       │
-│ CGEvent / CGTablet   │    TCP         │ (finger + S Pen)     │
-│ (input injection)    │                │                      │
+│ touch server         │    TCP         │ (finger + S Pen)     │
+│ (events discarded)   │                │                      │
 │                      │                │ TouchSender (TCP)    │
 │ Bonjour mDNS         │   mDNS        │ NSD Discovery        │
 │                      │◀─────────────▶│                      │
@@ -44,7 +44,6 @@ Mac (Go + CGo Server)                    Android (Kotlin Client)
 ### Android (Client)
 - Android 10+ (API 29+)
 - Android Studio (to build the APK)
-- Recommended: Samsung tablet with S Pen for pressure support
 
 ## Build
 
@@ -99,9 +98,22 @@ For lower latency, connect your Android device via USB:
 | Channel       | Protocol | Direction     | Purpose                    |
 |---------------|----------|---------------|----------------------------|
 | Video Stream  | UDP      | Mac → Android | Low-latency H.264 video    |
-| Touch Events  | TCP      | Android → Mac | Reliable touch/pen input   |
+| Touch Events  | TCP      | Android → Mac | Touch/pen input — accepted, currently discarded (see below) |
 | Control       | TCP      | Bidirectional | Handshake, config          |
 | Discovery     | mDNS     | LAN broadcast | Auto-discover Mac server   |
+
+## Touch input (disabled)
+
+Touch and S Pen injection is commented out in `server/cmd/server/main.go` (`startPipelineCommon`). The tablet works as a display only.
+
+Why: injection warps the macOS cursor with `CGWarpMouseCursorPosition`, and macOS has a single shared cursor across all displays. Every touch on the tablet therefore yanked the cursor away from whatever display was being used at the time.
+
+What still happens: the client sends touch events exactly as before, and the server's touch port still listens and accepts them. With no handler registered they are read and dropped in `server/internal/touch/server.go`. The wire protocol and handshake are unchanged, so an already-installed APK keeps working — no reinstall needed.
+
+To re-enable, uncomment two things in `server/cmd/server/main.go` and rebuild the server:
+
+1. The injection block in `startPipelineCommon`
+2. The `internal/input` import
 
 ## Known Limitations
 
